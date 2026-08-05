@@ -1,0 +1,653 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleType {
+  SUPER_ADMIN
+  ADMIN
+  PETUGAS
+  PIMPINAN
+  USER
+}
+
+enum StationType {
+  ARR
+  AWLR
+}
+
+enum ObservationSource {
+  MANUAL
+  IMPORT_EXCEL
+  SENSOR
+  API
+}
+
+enum ImportType {
+  ARR
+  AWLR
+}
+
+enum JenisPermohonan {
+  IZIN_BARU
+  PERPANJANGAN
+}
+
+enum RekomtekStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  REJECTED
+  PUBLISHED
+}
+
+enum DisasterReportStatus {
+  DRAFT
+  SUBMITTED
+  VERIFIED
+  REJECTED
+}
+
+enum DisasterSeverity {
+  RINGAN
+  SEDANG
+  BERAT
+}
+
+enum DisasterType {
+  BANJIR
+  GEMPA
+  LONGSOR
+  KEKERINGAN
+  ANGIN_TOPAN
+  KEBAKARAN_HUTAN
+  GELOMBANG_PASANG
+  LAINNYA
+}
+
+model Rekomtek {
+  id String @id @default(uuid())
+
+  // ===========================
+  // Dokumen Identity
+  // ===========================
+
+  nomor  String @unique
+  judul  String
+  jenis  String
+  deskripsi String?
+
+  // ===========================
+  // Status Workflow
+  // ============================
+
+  status RekomtekStatus @default(DRAFT)
+
+  // ===========================
+  // Jenis Permohonan
+  // ===========================
+
+  jenisPermohonan JenisPermohonan @default(IZIN_BARU)
+
+  // ===========================
+  // Referensi Geografis
+  // ===========================
+
+  stationId    String?
+  station      Station?    @relation(fields: [stationId], references: [id], onDelete: SetNull)
+
+  riverId      String?
+  river        River?      @relation(fields: [riverId], references: [id], onDelete: SetNull)
+
+  customRiverName String?
+
+  watershedId  String?
+  watershed    Watershed?  @relation(fields: [watershedId], references: [id], onDelete: SetNull)
+
+  riverRegionId String?
+  riverRegion  RiverRegion? @relation(fields: [riverRegionId], references: [id], onDelete: SetNull)
+
+  // ===========================
+  // Data Analisis
+  // ===========================
+
+  analysisData Json?
+  parameters   Json?
+
+  // ===========================
+  // Dokumen Output
+  // ===========================
+
+  fileUrl String?
+
+  // ===========================
+  // Checklist Berkas
+  // ===========================
+
+  berkas RekomtekBerkas[]
+
+  // ===========================
+  // Audit Workflow
+  // ===========================
+
+  createdBy  String
+  reviewedBy String?
+  approvedBy String?
+
+  reviewedAt  DateTime?
+  approvedAt  DateTime?
+  publishedAt DateTime?
+
+  // ===========================
+  // Audit Timestamps
+  // ===========================
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([stationId])
+  @@index([riverId])
+  @@index([watershedId])
+  @@index([riverRegionId])
+  @@index([createdAt])
+}
+
+model User {
+  id String @id @default(uuid())
+
+  name     String
+  email    String @unique
+  password String
+
+  phone  String?
+  avatar String?
+
+  roleId String?
+  role   Role?   @relation(fields: [roleId], references: [id])
+
+  isActive      Boolean @default(true)
+  emailVerified Boolean @default(false)
+
+  lastLoginAt DateTime?
+
+  // Multi-role & permissions
+  userRoles       UserRole[]
+  userPermissions UserPermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Role {
+  id String @id @default(uuid())
+
+  name RoleType @unique
+
+  users     User[]
+  userRoles UserRole[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserRole {
+  id String @id @default(uuid())
+
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, roleId])
+}
+
+model Permission {
+  id String @id @default(uuid())
+
+  slug        String  @unique
+  name        String
+  description String?
+  group       String
+
+  userPermissions UserPermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UserPermission {
+  id String @id @default(uuid())
+
+  userId       String
+  permissionId String
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, permissionId])
+}
+
+model DisasterReport {
+  id String @id @default(uuid())
+
+  // Pelapor publik tidak wajib login, maka userId nullable
+  userId String?
+
+  judul  String
+  jenis  DisasterType
+  deskripsi String
+
+  // Identitas pelapor (publik)
+  reporterName  String
+  reporterPhone String
+
+  lokasi     Json? // { lat, lng, address, village, district }
+  severity   DisasterSeverity?
+  status     DisasterReportStatus @default(DRAFT)
+
+  tanggalKejadian DateTime @default(now())
+  attachments      Json? // array of file URLs
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([jenis])
+}
+
+model RiverRegion {
+  id String @id @default(uuid())
+
+  code String? @unique
+  slug String? @unique
+
+  name String
+
+  geometry Json?
+
+  description String?
+
+  status Boolean @default(true)
+
+  publishedAt DateTime?
+
+  watersheds Watershed[]
+  rekomteks  Rekomtek[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Watershed {
+  id String @id @default(uuid())
+
+  riverRegionId String
+  riverRegion   RiverRegion @relation(fields: [riverRegionId], references: [id])
+
+  code String? @unique
+  slug String? @unique
+
+  name String
+
+  area Float?
+
+  geometry Json?
+
+  description String?
+
+  status Boolean @default(true)
+
+  publishedAt DateTime?
+
+  rivers River[]
+
+  stations Station[]
+  rekomteks Rekomtek[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model River {
+  id String @id @default(uuid())
+
+  watershedId String
+  watershed   Watershed @relation(fields: [watershedId], references: [id])
+
+  parentRiverId String?
+  parentRiver   River?  @relation("RiverHierarchy", fields: [parentRiverId], references: [id])
+
+  childRivers River[] @relation("RiverHierarchy")
+
+  code String? @unique
+  slug String? @unique
+
+  name String
+
+  orderNumber Int?
+
+  length Float?
+
+  geometry Json?
+
+  description String?
+
+  status Boolean @default(true)
+
+  publishedAt DateTime?
+
+  stations Station[] @relation("RiverStations")
+
+  rekomteks Rekomtek[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Station {
+  id String @id @default(uuid())
+
+  watershedId String
+  watershed   Watershed @relation(fields: [watershedId], references: [id])
+
+  riverId String?
+  river   River?  @relation("RiverStations", fields: [riverId], references: [id])
+
+  code String? @unique
+
+  name String
+
+  type StationType
+
+  latitude  Decimal? @db.Decimal(10, 8)
+  longitude Decimal? @db.Decimal(11, 8)
+  elevation Decimal? @db.Decimal(8, 2)
+
+  operatorName String?
+
+  village  String?
+  district String?
+  regency  String?
+
+  installationYear Int?
+
+  description String?
+
+  status Boolean @default(true)
+
+  publishedAt DateTime?
+
+  observations Observation[]
+  rekomteks    Rekomtek[]
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  importHistories ImportHistory[]
+}
+
+model Observation {
+  id String @id @default(uuid())
+
+  // ===========================
+  // Relasi
+  // ===========================
+
+  stationId String
+  station   Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  importHistoryId String?
+  importHistory   ImportHistory? @relation(fields: [importHistoryId], references: [id], onDelete: SetNull)
+
+  // ===========================
+  // Waktu Observasi
+  // ===========================
+
+  observationDate DateTime
+
+  // ===========================
+  // Data Hidrologi
+  // ===========================
+
+  rainfall Decimal? @db.Decimal(8, 2)
+
+  waterLevel Decimal? @db.Decimal(8, 2)
+
+  discharge Decimal? @db.Decimal(10, 2)
+
+  // ===========================
+  // Metadata
+  // ===========================
+
+  observerName String?
+
+  source ObservationSource @default(MANUAL)
+
+  note String?
+
+  isValid Boolean @default(true)
+
+  verifiedAt DateTime?
+
+  details ObservationDetail[]
+
+  // ===========================
+  // Audit
+  // ===========================
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([stationId, observationDate])
+  @@index([stationId])
+  @@index([observationDate])
+  @@index([stationId, observationDate])
+  @@index([source])
+  @@index([importHistoryId])
+}
+
+model ObservationDetail {
+  id String @id @default(uuid())
+
+  // ===========================
+  // Relasi
+  // ===========================
+
+  observationId String
+
+  observation Observation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+
+  // ===========================
+  // Data
+  // ===========================
+
+  observationTime String
+
+  waterLevel Decimal? @db.Decimal(8, 2)
+
+  discharge Decimal? @db.Decimal(10, 2)
+
+  note String?
+
+  // ===========================
+  // Audit
+  // ===========================
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  @@index([observationId])
+  @@index([observationTime])
+}
+
+model ImportHistory {
+  id String @id @default(uuid())
+
+  filename String
+
+  stationId String?
+  station   Station? @relation(fields: [stationId], references: [id])
+
+  importType ImportType
+
+  totalRows Int
+
+  successRows Int
+
+  failedRows Int
+
+  duplicateRows Int @default(0)
+
+  importedBy String
+
+  startedAt DateTime
+
+  finishedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  importErrors ImportError[]
+
+  observations Observation[]
+}
+
+model ImportError {
+  id String @id @default(uuid())
+
+  historyId String
+  history   ImportHistory @relation(fields: [historyId], references: [id])
+
+  rowNumber Int
+
+  columnName String?
+
+  message String
+
+  createdAt DateTime @default(now())
+}
+
+model ImportDraft {
+  id String @id @default(uuid())
+
+  filename String
+
+  importType ImportType
+
+  metadata Json
+
+  rows Json
+
+  summary Json
+
+  createdBy String
+
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+}
+
+// ===========================
+// Rekomtek Berkas Template
+// ===========================
+
+model RekomtekBerkasTemplate {
+  id String @id @default(uuid())
+
+  // Kategori
+  jenis            String          // GALIAN_C, APU, PLTA, PLTM, etc
+  jenisPermohonan  JenisPermohonan
+
+  // Identitas item
+  kode      String  // "1", "12.a", "12.b" — untuk display & grouping
+  nomorUrut Int     // untuk sorting
+  uraian    String  // Nama berkas / deskripsi
+  isRequired Boolean @default(true)
+  hasSubItems Boolean @default(false)
+
+  // Relasi ke instance berkas (optional — untuk tracking)
+  berkasItems RekomtekBerkas[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([jenis, jenisPermohonan, kode])
+  @@index([jenis, jenisPermohonan])
+}
+
+// ===========================
+// Rekomtek Berkas (Instance)
+// ===========================
+
+model RekomtekBerkas {
+  id String @id @default(uuid())
+
+  rekomtekId String
+  rekomtek   Rekomtek @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+
+  templateId String?
+  template   RekomtekBerkasTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  // Copy dari template (bisa diubah)
+  kode      String  // "1", "12.a"
+  nomorUrut Int
+  uraian    String
+  isRequired Boolean @default(true)
+
+  // Status kelengkapan
+  isComplete Boolean  @default(false)
+  fileUrl    String?
+  fileName   String?
+  fileSize   Int?
+  notes      String?
+
+  // Revision tracking
+  revisionNote String?
+  returnedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rekomtekId])
+}
+
+// ===========================
+// Flowchart (Alur Publik)
+// ===========================
+
+model Flowchart {
+  id String @id @default(uuid())
+
+  // Identitas
+  slug        String  @unique
+  title       String
+  description String?
+
+  // Publikasi
+  isPublished Boolean @default(true)
+
+  // Konten grafik — array JSON dari node & edge (format React Flow)
+  nodes Json @default("[]")
+  edges Json @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+}

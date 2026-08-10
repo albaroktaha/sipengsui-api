@@ -74,7 +74,10 @@ describe('FlowchartsService', () => {
 
   describe('create', () => {
     it('melempar ConflictException bila slug sudah dipakai', async () => {
-      prisma.flowchart.findUnique.mockResolvedValue({ id: '1', slug: 'rekomtek' });
+      prisma.flowchart.findUnique.mockResolvedValue({
+        id: '1',
+        slug: 'rekomtek',
+      });
 
       await expect(
         service.create({

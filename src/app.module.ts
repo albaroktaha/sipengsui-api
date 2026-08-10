@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
 import { AuthModule } from './auth/auth.module';
+import { ReCaptchaModule } from './recaptcha/recaptcha.module';
 import { UsersModule } from './users/users.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RiverRegionsModule } from './river-regions/river-regions.module';
@@ -22,6 +25,7 @@ import { FlowchartsModule } from './flowcharts/flowcharts.module';
 import { PermissionsModule } from './permissions/permissions.module';
 import { RolesModule } from './roles/roles.module';
 import { DisasterReportsModule } from './disaster-reports/disaster-reports.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -29,8 +33,16 @@ import { DisasterReportsModule } from './disaster-reports/disaster-reports.modul
       isGlobal: true,
     }),
 
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60_000,
+        limit: 100,
+      },
+    ]),
+
     PrismaModule,
     AuthModule,
+    ReCaptchaModule,
     UsersModule,
     RiversModule,
     RiverRegionsModule,
@@ -47,8 +59,15 @@ import { DisasterReportsModule } from './disaster-reports/disaster-reports.modul
     PermissionsModule,
     RolesModule,
     DisasterReportsModule,
+    AiModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

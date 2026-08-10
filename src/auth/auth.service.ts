@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   ConflictException,
   UnauthorizedException,
@@ -9,6 +10,9 @@ import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
+import { EmailVerificationService } from './email-verification.service';
+import { MailService } from '../mail/mail.service';
+import { ReCaptchaService } from '../recaptcha/recaptcha.service';
 
 import { JwtService } from '@nestjs/jwt';
 import { LoginDto } from './dto/login.dto';
@@ -34,6 +38,9 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly emailVerificationService: EmailVerificationService,
+    private readonly mailService: MailService,
+    private readonly recaptchaService: ReCaptchaService,
   ) {}
 
   private omitPassword<T extends { password: string }>(
@@ -53,6 +60,12 @@ export class AuthService {
       throw new ConflictException('Email already exists');
     }
 
+    if (dto.termsAccepted !== true) {
+      throw new BadRequestException(
+        'Anda harus menyetujui Syarat & Ketentuan dan Kebijakan Privasi.',
+      );
+    }
+
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
     const userRole = await this.usersService.findRoleByName('USER');
@@ -66,6 +79,8 @@ export class AuthService {
       email: dto.email,
       password: hashedPassword,
       roleId: userRole.id,
+      emailVerified: false,
+      termsAcceptedAt: new Date(),
     });
 
     // Auto-assign default USER permissions
@@ -84,13 +99,33 @@ export class AuthService {
       });
     }
 
+    // Kirim email verifikasi
+    const { token } = await this.emailVerificationService.createToken(user.id);
+    await this.mailService.sendVerificationEmail(
+      user.email,
+      user.name,
+      token,
+    );
+
     return {
-      message: 'Register success',
+      message:
+        'Register success. Silakan verifikasi email Anda untuk mengaktifkan akun.',
       data: this.omitPassword(user),
     };
   }
 
   async login(dto: LoginDto) {
+    // Verifikasi captcha (anti-robot) sebelum proses login
+    const captchaValid = await this.recaptchaService.verify(
+      dto.captchaToken ?? '',
+    );
+
+    if (!captchaValid) {
+      throw new UnauthorizedException(
+        'Verifikasi captcha gagal. Silakan coba lagi.',
+      );
+    }
+
     const user = await this.usersService.findByEmail(dto.email);
 
     if (!user) {
@@ -106,6 +141,18 @@ export class AuthService {
     if (!isMatch) {
       throw new UnauthorizedException('Invalid credentials');
     }
+
+    if (!user.emailVerified) {
+      throw new UnauthorizedException(
+        'Email belum diverifikasi. Silakan verifikasi terlebih dahulu.',
+      );
+    }
+
+    // Catat waktu login & aktivitas terakhir
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date(), lastActivityAt: new Date() },
+    });
 
     // Ambil semua roles user
     const userRoles = await this.usersService.findUserRoles(user.id);
@@ -136,5 +183,13 @@ export class AuthService {
         permissions: permissionSlugs,
       },
     };
+  }
+
+  async verifyEmail(token: string) {
+    return this.emailVerificationService.verify(token);
+  }
+
+  async resendVerification(email: string) {
+    return this.emailVerificationService.resend(email);
   }
 }

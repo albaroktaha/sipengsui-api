@@ -36,6 +36,7 @@ const ALL_PERMISSIONS = [
   // ── GIS ──
   { slug: 'gis.read', name: 'Lihat Peta GIS', group: 'gis' },
   { slug: 'gis.publish', name: 'Publikasi Data GIS', group: 'gis' },
+  { slug: 'gis.manage', name: 'Kelola Peta GIS', group: 'gis' },
 
   // ── Rekomtek ──
   { slug: 'rekomtek.read', name: 'Lihat Rekomtek', group: 'rekomtek' },
@@ -249,6 +250,7 @@ async function main() {
     'imports.create',
     'gis.read',
     'gis.publish',
+    'gis.manage',
     'master-data.read',
     'master-data.create',
     'master-data.update',
@@ -302,6 +304,7 @@ async function main() {
     'stations.read',
     'gis.read',
     'gis.publish',
+    'gis.manage',
     'rekomtek.read',
     'rekomtek.create',
     'rekomtek.update',

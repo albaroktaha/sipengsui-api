@@ -26,6 +26,8 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.36",
+    "@google/generative-ai": "^0.24.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
@@ -33,19 +35,26 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.27",
     "@nestjs/swagger": "^11.4.4",
-    "@prisma/client": "^6.10.1",
+    "@nestjs/throttler": "^6.5.0",
+    "@prisma/client": "6.10.1",
+    "@tmcw/togeojson": "^7.1.2",
+    "@xmldom/xmldom": "^0.9.10",
+    "adm-zip": "^0.6.0",
+    "ai": "^7.0.55",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "jwt-decode": "^4.0.0",
     "multer": "^2.2.0",
+    "nodemailer": "^9.0.4",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -53,12 +62,14 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
+    "@types/adm-zip": "^0.5.8",
     "@types/bcrypt": "^6.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.1.0",
     "@types/node": "^24.0.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^7.0.0",
     "eslint": "^9.18.0",
@@ -67,7 +78,7 @@
     "globals": "^17.0.0",
     "jest": "^30.0.0",
     "prettier": "^3.4.2",
-    "prisma": "^6.10.1",
+    "prisma": "6.10.1",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
@@ -89,6 +100,9 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!ai|@ai-sdk|@workflow|zod|@nestjs/throttler)"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

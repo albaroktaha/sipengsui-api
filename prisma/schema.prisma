@@ -178,11 +178,18 @@ model User {
   isActive      Boolean @default(true)
   emailVerified Boolean @default(false)
 
-  lastLoginAt DateTime?
+  termsAcceptedAt DateTime?
+
+  lastLoginAt     DateTime?
+  lastActivityAt  DateTime?
 
   // Multi-role & permissions
   userRoles       UserRole[]
   userPermissions UserPermission[]
+
+  // Email verification & password reset
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -240,6 +247,33 @@ model UserPermission {
   createdAt DateTime @default(now())
 
   @@unique([userId, permissionId])
+}
+
+// Token verifikasi email — dibuat saat register / kirim ulang
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Token reset password — siap untuk fitur lupa password
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model DisasterReport {
@@ -650,4 +684,33 @@ model Flowchart {
   updatedAt DateTime @updatedAt
 
   @@index([slug])
+}
+
+// ===========================
+// Peta GIS (upload .kmz/.kml)
+// ===========================
+
+model GisMap {
+  id          String   @id @default(uuid())
+  name        String
+  category    String // PETA_POS_HIDROLOGI | PETA_WILAYAH_SUNGAI | ...
+  description String?
+
+  // File asli (.kmz/.kml) — disimpan untuk diunduh
+  fileUrl  String
+  fileName String
+  fileSize Int
+
+  // Hasil konversi KMZ/KML → GeoJSON FeatureCollection (untuk viewer)
+  geometry    Json?
+  hasGeometry Boolean @default(false)
+
+  status      Boolean  @default(true)
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([status, publishedAt])
 }

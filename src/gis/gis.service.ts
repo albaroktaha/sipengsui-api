@@ -10,6 +10,28 @@ interface BBox {
   maxLat: number;
 }
 
+type StationFeatureSource = {
+  id: string;
+  code: string | null;
+  name: string;
+  type: string;
+  latitude: Prisma.Decimal | null;
+  longitude: Prisma.Decimal | null;
+  elevation: Prisma.Decimal | null;
+  operatorName: string | null;
+  village: string | null;
+  district: string | null;
+  regency: string | null;
+  installationYear: number | null;
+  status: boolean;
+  publishedAt: Date | null;
+  watershedId: string;
+  watershed?: { name: string } | null;
+  riverId: string | null;
+  river?: { name: string } | null;
+  _count?: { observations: number };
+};
+
 @Injectable()
 export class GisService {
   constructor(private readonly prisma: PrismaService) {}
@@ -20,7 +42,20 @@ export class GisService {
   private parseBBox(bbox?: string): BBox | null {
     if (!bbox) return null;
     const parts = bbox.split(',').map(Number);
-    if (parts.length !== 4 || parts.some(isNaN)) {
+    if (
+      parts.length !== 4 ||
+      parts.some((value) => !Number.isFinite(value)) ||
+      parts[0] < -180 ||
+      parts[0] > 180 ||
+      parts[2] < -180 ||
+      parts[2] > 180 ||
+      parts[1] < -90 ||
+      parts[1] > 90 ||
+      parts[3] < -90 ||
+      parts[3] > 90 ||
+      parts[0] > parts[2] ||
+      parts[1] > parts[3]
+    ) {
       throw new BadRequestException(
         'Format bbox tidak valid. Gunakan: minLng,minLat,maxLng,maxLat',
       );
@@ -36,8 +71,8 @@ export class GisService {
   /**
    * Build GeoJSON Feature for a station
    */
-  private toStationFeature(station: any) {
-    if (!station.latitude || !station.longitude) return null;
+  private toStationFeature(station: StationFeatureSource) {
+    if (station.latitude == null || station.longitude == null) return null;
 
     return {
       type: 'Feature',
@@ -70,7 +105,10 @@ export class GisService {
   /**
    * Build a `where` clause that only matches published records when requested.
    */
-  private publishedFilter(extra: any, publishedOnly: boolean) {
+  private publishedFilter<T extends object>(
+    extra: T,
+    publishedOnly: boolean,
+  ): T {
     if (!publishedOnly) return extra;
     return {
       ...extra,
@@ -84,7 +122,7 @@ export class GisService {
    */
   async getStations(query: QueryGisDto) {
     const bbox = this.parseBBox(query.bbox);
-    const where: any = {
+    const where: Prisma.StationWhereInput = {
       latitude: { not: null },
       longitude: { not: null },
     };
@@ -94,8 +132,10 @@ export class GisService {
       where.latitude = { gte: bbox.minLat, lte: bbox.maxLat };
     }
 
-    if (query.stationType) {
+    if (query.stationType === 'ARR' || query.stationType === 'AWLR') {
       where.type = query.stationType;
+    } else if (query.stationType) {
+      throw new BadRequestException('Tipe station tidak valid');
     }
 
     const stations = await this.prisma.station.findMany({
@@ -129,13 +169,21 @@ export class GisService {
    * GET /gis/stations/with-latest-obs - Stations + latest observation
    */
   async getStationsWithLatestObservation(query: QueryGisDto) {
-    const where: any = {
+    const bbox = this.parseBBox(query.bbox);
+    const where: Prisma.StationWhereInput = {
       latitude: { not: null },
       longitude: { not: null },
     };
 
-    if (query.stationType) {
+    if (bbox) {
+      where.longitude = { gte: bbox.minLng, lte: bbox.maxLng };
+      where.latitude = { gte: bbox.minLat, lte: bbox.maxLat };
+    }
+
+    if (query.stationType === 'ARR' || query.stationType === 'AWLR') {
       where.type = query.stationType;
+    } else if (query.stationType) {
+      throw new BadRequestException('Tipe station tidak valid');
     }
 
     const stations = await this.prisma.station.findMany({
@@ -148,12 +196,13 @@ export class GisService {
         },
       },
       orderBy: { name: 'asc' },
+      skip: (query.page - 1) * query.limit,
       take: Math.min(query.limit, 5000),
     });
 
     const features = stations
       .map((s) => {
-        if (!s.latitude || !s.longitude) return null;
+        if (s.latitude == null || s.longitude == null) return null;
         const latestObs = s.observations?.[0] || null;
         return {
           type: 'Feature',
@@ -391,7 +440,7 @@ export class GisService {
         rivers: {
           type: 'FeatureCollection',
           features: rivers
-            .map((r: any) => ({
+            .map((r) => ({
               type: 'Feature',
               geometry: r.geometry,
               properties: {
@@ -409,7 +458,7 @@ export class GisService {
         watersheds: {
           type: 'FeatureCollection',
           features: watersheds
-            .map((w: any) => ({
+            .map((w) => ({
               type: 'Feature',
               geometry: w.geometry,
               properties: {
@@ -477,7 +526,11 @@ export class GisService {
             },
           }),
           withGeometry: await this.prisma.station.count({
-            where: { ...publishedWhere, latitude: { not: null } },
+            where: {
+              ...publishedWhere,
+              latitude: { not: null },
+              longitude: { not: null },
+            },
           }),
         },
         rivers: {

@@ -5,17 +5,20 @@ import { JwtStrategy } from './jwt.strategy';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { EmailVerificationService } from './email-verification.service';
 
 import { UsersModule } from '../users/users.module';
 import { RolesGuard } from './guards/roles.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
 import { PrismaModule } from '../prisma/prisma.module';
+import { MailModule } from '../mail/mail.module';
 
 @Global()
 @Module({
   imports: [
     UsersModule,
     PrismaModule,
+    MailModule,
 
     JwtModule.register({
       secret: process.env.JWT_SECRET,
@@ -25,7 +28,13 @@ import { PrismaModule } from '../prisma/prisma.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, RolesGuard, PermissionsGuard],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    RolesGuard,
+    PermissionsGuard,
+    EmailVerificationService,
+  ],
   exports: [RolesGuard, PermissionsGuard],
 })
 export class AuthModule {}

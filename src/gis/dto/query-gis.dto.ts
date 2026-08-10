@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class QueryGisDto {

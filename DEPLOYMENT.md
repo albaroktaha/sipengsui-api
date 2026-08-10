@@ -4,7 +4,7 @@
 
 - Docker Engine + Docker Compose terinstall dan daemon berjalan.
   Cek: `docker info` (Linux) / Docker Desktop (Windows/macOS).
-- Port `3000` (API) dan `5432` (Postgres, internal) bebas.
+- Port `3000` (API) bebas (Postgres `5432` hanya internal antar-container).
 
 ## Struktur
 
@@ -12,34 +12,27 @@
 |---|---|
 | `Dockerfile` | Multi-stage build (node:22-alpine): build NestJS → production image |
 | `docker-entrypoint.sh` | Menjalankan `prisma migrate deploy`, seed opsional, lalu start app |
-| `docker-compose.yml` | Orchestrasi `api` + `db` (PostgreSQL 16) + volume (db, uploads) |
-| `.env.docker.example` | Template environment untuk container |
+| `compose.yaml` | Orchestrasi `api` + `db` (PostgreSQL 16) + volume (db, uploads). Self-contained — semua env punya default |
+| `.env.docker.example` | Template variabel environment (opsional, untuk referensi) |
 
-## Setup
-
-### 1. Siapkan environment
+## Quick start (VPS / server)
 
 ```bash
-cp .env.docker.example .env.docker
-```
+git clone https://github.com/albaroktaha/sipengsui-api.git
+cd sipengsui-api
 
-Lalu edit `.env.docker`:
+# opsional: buat .env dari template (untuk JWT_SECRET, kredensial DB, dll.)
+cp .env.docker.example .env
 
-- **Wajib**: ganti `JWT_SECRET` dengan string acak panjang (mis. `openssl rand -hex 32`)
-- `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` — kredensial database (ubah di production)
-- `CORS_ORIGIN` — URL frontend
-- `MAIL_*` — SMTP untuk email verifikasi (kosongkan di dev)
-- `GEMINI_API_KEY` — untuk fitur chatbot
-- `RECAPTCHA_*` — jika reCAPTCHA aktif
+# wajib untuk production: set JWT_SECRET panjang & acak, mis.:
+#   echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env
 
-> `.env.docker` berisi secret dan tidak di-commit (sudah di .gitignore).
-
-### 2. Build & jalankan
-
-```bash
 docker compose up -d --build
 ```
 
+- `compose.yaml` tidak membutuhkan file env — semua nilai punya default aman.
+- Bila file `.env` ada di direktori yang sama, Compose otomatis membacanya dan
+  nilainya menimpa default (interpolasi `${VAR:-default}`).
 - `db` menjalankan healthcheck `pg_isready` — API menunggu DB siap.
 - Entrypoint API otomatis menjalankan semua migration (`prisma migrate deploy`).
 
@@ -51,12 +44,32 @@ docker compose logs -f api
 
 Swagger API: `http://localhost:3000/api`
 
-### 3. Seed database (deploy pertama)
+## Konfigurasi environment (`.env`)
+
+Semua variabel di bawah punya default di `compose.yaml`. Set lewat `.env` atau
+environment platform (Render, Railway, VPS, dll.) untuk production:
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `sipengsui` | Kredensial database |
+| `JWT_SECRET` | `change-me-in-production` | **Wajib diganti** di production |
+| `JWT_EXPIRES_IN` | `7d` | Masa berlaku token |
+| `CORS_ORIGIN` | `http://localhost:3001` | URL frontend |
+| `API_PORT` | `3000` | Port API di host |
+| `MAIL_HOST` / `MAIL_PORT` / `MAIL_USER` / `MAIL_PASS` | kosong | SMTP untuk email verifikasi (kosong = dev mode, email di-log) |
+| `APP_URL` | `http://localhost:3001` | URL web untuk link verifikasi |
+| `RECAPTCHA_SECRET_KEY` / `RECAPTCHA_SITE_KEY` | kosong | reCAPTCHA v2 (kosong = dilewati) |
+| `GEMINI_API_KEY` | kosong | Chatbot AI |
+| `RUN_SEED` | `false` | `true` sekali pada deploy pertama |
+
+Daftar lengkap: lihat `.env.docker.example`.
+
+## Seed database (deploy pertama)
 
 Set sekali pada deploy pertama:
 
 ```bash
-# di .env.docker
+# di .env
 RUN_SEED=true
 ```
 
@@ -70,7 +83,7 @@ Setelah seed selesai, kembalikan `RUN_SEED=false` agar tidak berjalan ulang tiap
 
 > Seed membuat user admin + permissions awal. Kredensial admin bisa dilihat di `prisma/seed.ts`.
 
-### 4. Operasional
+## Operasional
 
 ```bash
 docker compose ps                # status
@@ -85,18 +98,6 @@ Volume:
 - `sipengsui-api_db-data` — data PostgreSQL
 - `sipengsui-api_uploads-data` — file upload (`/app/uploads`: GIS maps, rekomtek berkas, disaster reports)
 
-### 5. Deploy ke server (VPS)
-
-Di server:
-
-```bash
-git clone https://github.com/albaroktaha/sipengsui-api.git
-cd sipengsui-api
-cp .env.docker.example .env.docker
-# edit .env.docker (JWT_SECRET, POSTGRES_PASSWORD, CORS_ORIGIN, MAIL_*, dll)
-docker compose up -d --build
-```
-
 Update versi baru:
 
 ```bash
@@ -109,8 +110,8 @@ docker compose up -d --build
 ```bash
 docker build -t sipengsui-api .
 docker run --rm -p 3000:3000 \
-  --env-file .env.docker \
   -e DATABASE_URL="postgresql://user:pass@host:5432/sipengsui?schema=public" \
+  -e JWT_SECRET="ganti-dengan-secret-panjang" \
   -v sipengsui-uploads:/app/uploads \
   sipengsui-api
 ```
@@ -120,6 +121,7 @@ docker run --rm -p 3000:3000 \
 | Masalah | Solusi |
 |---|---|
 | `error during connect... docker daemon is not running` | Start Docker Desktop / service docker |
+| `env file ... not found` | Pastikan memakai `compose.yaml` (bukan yang mereferensikan `.env.docker`); file ini self-contained |
 | API restart terus (`db` belum siap) | Pastikan healthcheck db hijau: `docker compose ps` |
 | `PrismaClientInitializationError` (query engine) | Image production sudah include `openssl`; pastikan `DATABASE_URL` benar |
 | Upload 404 di `/uploads/...` | Pastikan file tersimpan: `docker compose exec api ls /app/uploads`; static serve memakai `process.cwd()/uploads` |

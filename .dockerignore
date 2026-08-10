@@ -4,6 +4,7 @@ coverage
 uploads
 .env
 .env.*
+.env.docker
 *.log
 .git
 .gitignore

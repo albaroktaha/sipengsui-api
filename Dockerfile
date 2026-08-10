@@ -24,24 +24,27 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Prisma needs openssl at runtime
+# Prisma engines need openssl at runtime
 RUN apk add --no-cache openssl
 
-# Install production deps only
+# Install production deps (prisma CLI included so `migrate deploy` works at runtime)
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Prisma CLI is needed to run migrations (keep only the CLI + engine, not the client libs)
-RUN npx prisma generate
-
-# Copy built output
+# Copy built output + migrations
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 
-# Create uploads dir for multer
+# Generate Prisma client for the production deps
+RUN npx prisma generate
+
+# Entrypoint: migrate deploy (+ optional seed) then start the app
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Uploads live on a volume; dir must exist for static serving
 RUN mkdir -p /app/uploads
 
 EXPOSE 3000
 
-# Run migrations then start the app
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]
+ENTRYPOINT ["docker-entrypoint.sh"]

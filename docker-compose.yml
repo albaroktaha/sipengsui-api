@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sipengsui-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sipengsui}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sipengsui}
+      POSTGRES_DB: ${POSTGRES_DB:-sipengsui}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sipengsui} -d ${POSTGRES_DB:-sipengsui}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    container_name: sipengsui-api
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sipengsui}:${POSTGRES_PASSWORD:-sipengsui}@db:5432/${POSTGRES_DB:-sipengsui}?schema=public
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db-data:
+  uploads-data:

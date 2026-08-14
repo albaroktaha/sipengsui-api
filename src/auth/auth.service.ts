@@ -12,7 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { EmailVerificationService } from './email-verification.service';
 import { MailService } from '../mail/mail.service';
-import { ReCaptchaService } from '../recaptcha/recaptcha.service';
+import { TurnstileService } from '../turnstile/turnstile.service';
 
 import { JwtService } from '@nestjs/jwt';
 import { LoginDto } from './dto/login.dto';
@@ -40,7 +40,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly emailVerificationService: EmailVerificationService,
     private readonly mailService: MailService,
-    private readonly recaptchaService: ReCaptchaService,
+    private readonly turnstileService: TurnstileService,
   ) {}
 
   private omitPassword<T extends { password: string }>(
@@ -101,11 +101,7 @@ export class AuthService {
 
     // Kirim email verifikasi
     const { token } = await this.emailVerificationService.createToken(user.id);
-    await this.mailService.sendVerificationEmail(
-      user.email,
-      user.name,
-      token,
-    );
+    await this.mailService.sendVerificationEmail(user.email, user.name, token);
 
     return {
       message:
@@ -115,8 +111,8 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    // Verifikasi captcha (anti-robot) sebelum proses login
-    const captchaValid = await this.recaptchaService.verify(
+    // Verifikasi Turnstile (anti-robot) sebelum proses login
+    const captchaValid = await this.turnstileService.verify(
       dto.captchaToken ?? '',
     );
 

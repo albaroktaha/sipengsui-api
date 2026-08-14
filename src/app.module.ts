@@ -7,7 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
 import { AuthModule } from './auth/auth.module';
-import { ReCaptchaModule } from './recaptcha/recaptcha.module';
+import { TurnstileModule } from './turnstile/turnstile.module';
 import { UsersModule } from './users/users.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RiverRegionsModule } from './river-regions/river-regions.module';
@@ -42,7 +42,7 @@ import { AiModule } from './modules/ai/ai.module';
 
     PrismaModule,
     AuthModule,
-    ReCaptchaModule,
+    TurnstileModule,
     UsersModule,
     RiversModule,
     RiverRegionsModule,

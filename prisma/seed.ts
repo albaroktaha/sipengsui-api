@@ -1,7 +1,5 @@
 import { PrismaClient, RoleType } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
 
 const prisma = new PrismaClient();
 
@@ -125,13 +123,18 @@ async function main() {
 
   const password = await bcrypt.hash('Admin123!', 10);
 
+  // Hapus semua user lain (hanya sisakan Super Admin)
+  await prisma.user.deleteMany({
+    where: { email: { not: 'sipengsui@gmail.com' } },
+  });
+
   // ── Superadmin ──
   const superadminUser = await prisma.user.upsert({
-    where: { email: 'superadmin@sipengsui.id' },
+    where: { email: 'sipengsui@gmail.com' },
     update: {},
     create: {
       name: 'Super Administrator',
-      email: 'superadmin@sipengsui.id',
+      email: 'sipengsui@gmail.com',
       password,
       roleId: roles.SUPER_ADMIN.id,
       emailVerified: true,
@@ -169,405 +172,17 @@ async function main() {
 
   console.log('✅ Superadmin seeded with all permissions');
 
-  // ── Admin ──
-  const adminUser = await prisma.user.upsert({
-    where: { email: 'admin@sipengsui.id' },
-    update: {},
-    create: {
-      name: 'Administrator',
-      email: 'admin@sipengsui.id',
-      password,
-      roleId: roles.ADMIN.id,
-      emailVerified: true,
-      isActive: true,
-    },
-  });
-
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: adminUser.id, roleId: roles.ADMIN.id } },
-    update: {},
-    create: { userId: adminUser.id, roleId: roles.ADMIN.id },
-  });
-
-  // Assign admin permissions (all except users/permissions management and superadmin)
-  const adminPermissions = ALL_PERMISSIONS.filter(
-    (p) =>
-      !['users.manage', 'permissions.manage', '*', 'dashboard.system'].includes(p.slug),
-  );
-
-  for (const perm of adminPermissions) {
-    await prisma.userPermission
-      .upsert({
-        where: {
-          userId_permissionId: {
-            userId: adminUser.id,
-            permissionId: permissionMap[perm.slug].id,
-          },
-        },
-        update: {},
-        create: {
-          userId: adminUser.id,
-          permissionId: permissionMap[perm.slug].id,
-        },
-      })
-      .catch(() => {});
-  }
-
-  console.log('✅ Admin seeded');
-
-  // ── Petugas Hidrologi ──
-  const petugasUser = await prisma.user.upsert({
-    where: { email: 'petugas@sipengsui.id' },
-    update: {},
-    create: {
-      name: 'Petugas Hidrologi',
-      email: 'petugas@sipengsui.id',
-      password,
-      roleId: roles.PETUGAS.id,
-      emailVerified: true,
-      isActive: true,
-    },
-  });
-
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: petugasUser.id, roleId: roles.PETUGAS.id } },
-    update: {},
-    create: { userId: petugasUser.id, roleId: roles.PETUGAS.id },
-  });
-
-  // Petugas permissions: hydrology-focused
-  const petugasPermissions = [
-    'dashboard.view',
-    'dashboard.hydrology',
-    'stations.read',
-    'stations.create',
-    'stations.update',
-    'stations.delete',
-    'observations.read',
-    'observations.create',
-    'observations.update',
-    'imports.read',
-    'imports.create',
-    'gis.read',
-    'gis.publish',
-    'gis.manage',
-    'master-data.read',
-    'master-data.create',
-    'master-data.update',
-    'master-data.delete',
-  ];
-
-  for (const slug of petugasPermissions) {
-    const perm = permissionMap[slug];
-    if (perm) {
-      await prisma.userPermission
-        .upsert({
-          where: {
-            userId_permissionId: {
-              userId: petugasUser.id,
-              permissionId: perm.id,
-            },
-          },
-          update: {},
-          create: { userId: petugasUser.id, permissionId: perm.id },
-        })
-        .catch(() => {});
-    }
-  }
-
-  console.log('✅ Petugas Hidrologi seeded');
-
-  // ── Petugas Rekomtek ──
-  const rekomtekUser = await prisma.user.upsert({
-    where: { email: 'rekomtek@sipengsui.id' },
-    update: {},
-    create: {
-      name: 'Petugas Rekomtek',
-      email: 'rekomtek@sipengsui.id',
-      password,
-      roleId: roles.PETUGAS.id,
-      emailVerified: true,
-      isActive: true,
-    },
-  });
-
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: rekomtekUser.id, roleId: roles.PETUGAS.id } },
-    update: {},
-    create: { userId: rekomtekUser.id, roleId: roles.PETUGAS.id },
-  });
-
-  // Rekomtek permissions
-  const rekomtekPermissions = [
-    'dashboard.view',
-    'dashboard.rekomtek',
-    'stations.read',
-    'gis.read',
-    'gis.publish',
-    'gis.manage',
-    'rekomtek.read',
-    'rekomtek.create',
-    'rekomtek.update',
-    'rekomtek.submit',
-    'rekomtek.approve',
-    'rekomtek.reject',
-    'rekomtek.berkas',
-    'master-data.read',
-    'flowchart.read',
-  ];
-
-  for (const slug of rekomtekPermissions) {
-    const perm = permissionMap[slug];
-    if (perm) {
-      await prisma.userPermission
-        .upsert({
-          where: {
-            userId_permissionId: {
-              userId: rekomtekUser.id,
-              permissionId: perm.id,
-            },
-          },
-          update: {},
-          create: { userId: rekomtekUser.id, permissionId: perm.id },
-        })
-        .catch(() => {});
-    }
-  }
-
-  console.log('✅ Petugas Rekomtek seeded');
-
-  // ── Regular User ──
-  const regularUser = await prisma.user.upsert({
-    where: { email: 'user@sipengsui.id' },
-    update: {},
-    create: {
-      name: 'User Biasa',
-      email: 'user@sipengsui.id',
-      password,
-      roleId: roles.USER.id,
-      emailVerified: true,
-      isActive: true,
-    },
-  });
-
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: regularUser.id, roleId: roles.USER.id } },
-    update: {},
-    create: { userId: regularUser.id, roleId: roles.USER.id },
-  });
-
-  // User permissions: limited
-  const userPermissions = [
-    'dashboard.view',
-    'stations.read',
-    'gis.read',
-    'master-data.read',
-    'rekomtek.read',
-    'rekomtek.create',
-    'rekomtek.update',
-    'rekomtek.submit',
-    'rekomtek.berkas',
-    'disaster-reports.read',
-    'disaster-reports.create',
-  ];
-
-  for (const slug of userPermissions) {
-    const perm = permissionMap[slug];
-    if (perm) {
-      await prisma.userPermission
-        .upsert({
-          where: {
-            userId_permissionId: {
-              userId: regularUser.id,
-              permissionId: perm.id,
-            },
-          },
-          update: {},
-          create: { userId: regularUser.id, permissionId: perm.id },
-        })
-        .catch(() => {});
-    }
-  }
-
-  console.log('✅ User biasa seeded');
-
   // =====================================================
-  // RIVER REGION
+  // DATA GIS — dikosongkan (tampilan 0)
   // =====================================================
 
-  const ws = await prisma.riverRegion.upsert({
-    where: { code: 'WS001' },
-    update: {},
-    create: {
-      code: 'WS001',
-      slug: 'wampu-besitang',
-      name: 'Wilayah Sungai Wampu Besitang',
-      description: 'Seed Data',
-    },
-  });
+  // Hapus data GIS yang ada (sungai, DAS, WS, peta GIS)
+  await prisma.river.deleteMany({});
+  await prisma.watershed.deleteMany({});
+  await prisma.riverRegion.deleteMany({});
+  await prisma.gisMap.deleteMany({});
 
-  console.log('✅ River Region seeded');
-
-  // =====================================================
-  // WATERSHED
-  // =====================================================
-
-  const das = await prisma.watershed.upsert({
-    where: { code: 'DAS001' },
-    update: {},
-    create: {
-      code: 'DAS001',
-      slug: 'das-besitang',
-      name: 'DAS Besitang',
-      riverRegionId: ws.id,
-    },
-  });
-
-  console.log('✅ Watershed seeded');
-
-  // =====================================================
-  // RIVER
-  // =====================================================
-
-  await prisma.river.upsert({
-    where: { code: 'SG001' },
-    update: {},
-    create: {
-      code: 'SG001',
-      slug: 'sungai-besitang',
-      name: 'Sungai Besitang',
-      watershedId: das.id,
-    },
-  });
-
-  console.log('✅ River seeded');
-
-  // =====================================================
-  // GIS REFERENSI: WILAYAH SUNGAI BAH BOLON
-  // Data diekstrak dari webmap "PEMBAGIAN WS BB" (folder
-  // D:\SIPENGSUI\WS BB) via `node prisma/geo/extract.mjs`.
-  // =====================================================
-
-  console.log('🔄 Seeding GIS referensi WS Bahbolon...');
-
-  const readGeo = (file: string) => {
-    const raw = readFileSync(resolve(process.cwd(), 'prisma', 'geo', file), 'utf8');
-    return JSON.parse(raw);
-  };
-
-  const wsBB = readGeo('wilayah-sungai.json');
-  const demBB = readGeo('pembagian-ws-dem.json');
-  const dasBB = readGeo('daerah-aliran-sungai.json');
-  const sungaiBB = readGeo('sungai.json');
-
-  // ── River Region: WS Bahbolon (dari WilayahSungai_4) ──
-  const wsBBFeature = wsBB.features?.[0];
-  if (wsBBFeature) {
-    const wsBahbolon = await prisma.riverRegion.upsert({
-      where: { code: 'WS-BB' },
-      update: {
-        name: 'Wilayah Sungai Bah Bolon',
-        geometry: wsBBFeature.geometry,
-        description: 'Data referensi WS Bahbolon (Pembagian Wilayah Sungai)',
-        publishedAt: new Date(),
-      },
-      create: {
-        code: 'WS-BB',
-        slug: 'ws-bah-bolon',
-        name: 'Wilayah Sungai Bah Bolon',
-        geometry: wsBBFeature.geometry,
-        description: 'Data referensi WS Bahbolon (Pembagian Wilayah Sungai)',
-        status: true,
-        publishedAt: new Date(),
-      },
-    });
-
-    // ── Pembagian WS Bahbolon berdasarkan DEM (hulu/tengah/hilir) ──
-    for (const f of demBB.features ?? []) {
-      const lokasi = (f.properties?.LOKASI ?? '').toLowerCase();
-      await prisma.riverRegion.upsert({
-        where: { code: `WS-BB-${lokasi}` },
-        update: {
-          name: `WS Bahbolon (${f.properties?.LOKASI})`,
-          geometry: f.geometry,
-          publishedAt: new Date(),
-        },
-        create: {
-          code: `WS-BB-${lokasi}`,
-          slug: `ws-bah-bolon-${lokasi}`,
-          name: `WS Bahbolon (${f.properties?.LOKASI})`,
-          geometry: f.geometry,
-          description: 'Pembagian wilayah sungai berdasarkan DEM',
-          status: true,
-          publishedAt: new Date(),
-        },
-      });
-    }
-
-    // ── DAS (Watershed) dari DaerahAliranSungai_3 ──
-    const dasMap = new Map<string, string>(); // nama DAS → id
-    for (const f of dasBB.features ?? []) {
-      const dasName = f.properties?.DAS as string;
-      const dasSlug = dasName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      const created = await prisma.watershed.upsert({
-        where: { code: `DAS-BB-${dasSlug}` },
-        update: {
-          name: `DAS ${dasName}`,
-          area: f.properties?.LUAS_KM2_ ?? null,
-          geometry: f.geometry,
-          publishedAt: new Date(),
-        },
-        create: {
-          code: `DAS-BB-${dasSlug}`,
-          slug: `das-${dasSlug}`,
-          name: `DAS ${dasName}`,
-          area: f.properties?.LUAS_KM2_ ?? null,
-          riverRegionId: wsBahbolon.id,
-          geometry: f.geometry,
-          status: true,
-          publishedAt: new Date(),
-        },
-      });
-      dasMap.set(dasName, created.id);
-    }
-
-    // ── Sungai (River) dari Sungai_5 ──
-    // Mapping sungai → DAS: gunakan DAS pertama (Sungai_5 tidak punya
-    // relasi eksplisit ke DAS; semua sungai berada di wilayah WS Bahbolon).
-    const firstDasId = dasMap.values().next().value as string | undefined;
-    let sungaiCount = 0;
-    for (const f of sungaiBB.features ?? []) {
-      const name = (f.properties?.NM_Sungai as string)?.trim();
-      if (!name || name === 'null' || !firstDasId) continue;
-      const code = `SG-BB-${String(sungaiCount + 1).padStart(3, '0')}`;
-      await prisma.river.upsert({
-        where: { code },
-        update: {
-          name,
-          orderNumber: f.properties?.Orde ?? null,
-          length: f.properties?.Pjg__km_ ?? null,
-          geometry: f.geometry,
-          publishedAt: new Date(),
-        },
-        create: {
-          code,
-          slug: `sungai-bb-${code.toLowerCase()}`,
-          name,
-          orderNumber: f.properties?.Orde ?? null,
-          length: f.properties?.Pjg__km_ ?? null,
-          watershedId: firstDasId,
-          geometry: f.geometry,
-          status: true,
-          publishedAt: new Date(),
-        },
-      });
-      sungaiCount++;
-    }
-
-    console.log(
-      `✅ GIS WS Bahbolon: 1 WS + ${demBB.features.length} DEM + ${dasBB.features.length} DAS + ${sungaiCount} sungai`,
-    );
-  }
+  console.log('✅ Data GIS dikosongkan');
 
   // =====================================================
   // REKOMTEK BERKAS TEMPLATES
@@ -828,11 +443,7 @@ async function main() {
 
   console.log('\n🎉 Seeding complete!\n');
   console.log('📋 Akun tersedia:');
-  console.log('   superadmin@sipengsui.id / Admin123! — Super Admin');
-  console.log('   admin@sipengsui.id      / Admin123! — Administrator');
-  console.log('   petugas@sipengsui.id    / Admin123! — Petugas Hidrologi');
-  console.log('   rekomtek@sipengsui.id   / Admin123! — Petugas Rekomtek');
-  console.log('   user@sipengsui.id       / Admin123! — User Biasa');
+  console.log('   sipengsui@gmail.com / Admin123! — Super Admin');
 }
 
 main()

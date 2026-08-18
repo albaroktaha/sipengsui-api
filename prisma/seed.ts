@@ -3,6 +3,36 @@ import * as bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+// Mode: 'development' (default) atau 'production'.
+// - development: seed bisa mereset data (menghapus user lain & data GIS)
+// - production : seed hanya idempotent — tidak pernah menghapus data.
+const SEED_ENV = (process.env.SEED_ENV ?? 'development').toLowerCase();
+const IS_PRODUCTION = SEED_ENV === 'production';
+
+// NODE_ENV dianggap production bila SEED_ENV tidak diset eksplisit.
+const IS_NODE_PRODUCTION = !process.env.SEED_ENV && process.env.NODE_ENV === 'production';
+
+// Email + password superadmin. Password diambil dari env agar tidak
+// terkunci ke kredensial yang sama di semua lingkungan; tanpa env di
+// production, seed dibatalkan demi keamanan.
+const SUPERADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || 'sipengsui@gmail.com';
+const SUPERADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
+
+function validateEnv() {
+  if (IS_NODE_PRODUCTION && !process.env.SEED_ENV) {
+    throw new Error(
+      'NODE_ENV=production membutuhkan SEED_ENV eksplisit (development|production). ' +
+        'Set SEED_ENV=production untuk menjalankan seed idempotent, atau jangan jalankan seed di production.',
+    );
+  }
+  if (IS_PRODUCTION && !SUPERADMIN_PASSWORD) {
+    throw new Error(
+      'SEED_ADMIN_PASSWORD wajib diisi di production (mode SEED_ENV=production). ' +
+        'Set variabel SEED_ADMIN_PASSWORD dengan password superadmin yang kuat.',
+    );
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
 // DEFINE ALL PERMISSIONS
 // ══════════════════════════════════════════════════════════════
@@ -81,6 +111,8 @@ const ALL_PERMISSIONS = [
 
 async function main() {
   console.log('🌱 Seeding database...');
+  validateEnv();
+  console.log(`  Mode: ${IS_PRODUCTION ? 'production (idempotent)' : 'development (boleh reset)'}`);
 
   // =====================================================
   // ROLE
@@ -121,20 +153,27 @@ async function main() {
   // USER
   // =====================================================
 
-  const password = await bcrypt.hash('Admin123!', 10);
+  // Password: di development pakai default yang jelas; di production
+  // wajib berasal dari env SEED_ADMIN_PASSWORD (dipastikan validateEnv).
+  const password = await bcrypt.hash(IS_PRODUCTION ? SUPERADMIN_PASSWORD! : 'Admin123!', 10);
 
-  // Hapus semua user lain (hanya sisakan Super Admin)
-  await prisma.user.deleteMany({
-    where: { email: { not: 'sipengsui@gmail.com' } },
-  });
+  // Hapus user lain hanya di development. Di production seed tidak
+  // pernah menghapus akun — akun yang sudah ada dibiarkan utuh.
+  if (!IS_PRODUCTION) {
+    await prisma.user.deleteMany({
+      where: { email: { not: SUPERADMIN_EMAIL } },
+    });
+  }
 
   // ── Superadmin ──
+  // update: {} → akun yang sudah ada TIDAK diganti password-nya.
+  // Password env hanya dipakai saat membuat akun baru (first deploy).
   const superadminUser = await prisma.user.upsert({
-    where: { email: 'sipengsui@gmail.com' },
+    where: { email: SUPERADMIN_EMAIL },
     update: {},
     create: {
       name: 'Super Administrator',
-      email: 'sipengsui@gmail.com',
+      email: SUPERADMIN_EMAIL,
       password,
       roleId: roles.SUPER_ADMIN.id,
       emailVerified: true,
@@ -173,16 +212,21 @@ async function main() {
   console.log('✅ Superadmin seeded with all permissions');
 
   // =====================================================
-  // DATA GIS — dikosongkan (tampilan 0)
+  // DATA GIS — hanya dikosongkan di development
   // =====================================================
 
-  // Hapus data GIS yang ada (sungai, DAS, WS, peta GIS)
-  await prisma.river.deleteMany({});
-  await prisma.watershed.deleteMany({});
-  await prisma.riverRegion.deleteMany({});
-  await prisma.gisMap.deleteMany({});
+  // Di production seed TIDAK menghapus data GIS yang sudah ada
+  // (sungai, DAS, WS, peta) karena itu data operasional asli.
+  if (!IS_PRODUCTION) {
+    await prisma.river.deleteMany({});
+    await prisma.watershed.deleteMany({});
+    await prisma.riverRegion.deleteMany({});
+    await prisma.gisMap.deleteMany({});
 
-  console.log('✅ Data GIS dikosongkan');
+    console.log('✅ Data GIS dikosongkan (development)');
+  } else {
+    console.log('⏭️  Lewati penghapusan data GIS (mode production)');
+  }
 
   // =====================================================
   // REKOMTEK BERKAS TEMPLATES
@@ -442,8 +486,13 @@ async function main() {
   console.log('✅ Flowchart rekomtek seeded');
 
   console.log('\n🎉 Seeding complete!\n');
-  console.log('📋 Akun tersedia:');
-  console.log('   sipengsui@gmail.com / Admin123! — Super Admin');
+  if (IS_PRODUCTION) {
+    console.log('📋 Mode production: akun superadmin sudah dijamin lewat SEED_ADMIN_PASSWORD.');
+  } else {
+    console.log('📋 Akun tersedia (development):');
+    console.log(`   ${SUPERADMIN_EMAIL} / Admin123! — Super Admin`);
+    console.log('   ⚠️  Ganti password setelah login pertama.');
+  }
 }
 
 main()

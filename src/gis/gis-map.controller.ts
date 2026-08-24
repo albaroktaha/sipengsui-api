@@ -17,18 +17,26 @@ import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Permissions } from '../auth/decorators/permissions.decorator';
+import { GisMasterDataImportService } from './gis-master-data-import.service';
 import { GisMapService } from './gis-map.service';
 import {
   CreateGisMapDto,
   UpdateGisMapDto,
   QueryGisMapsDto,
 } from './dto/gis-map.dto';
+import {
+  GisMasterDataParentDto,
+  ImportGisMasterDataDto,
+} from './dto/gis-master-data-import.dto';
 
 @ApiTags('GIS Maps')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('gis/maps')
 export class GisMapController {
-  constructor(private readonly gisMapService: GisMapService) {}
+  constructor(
+    private readonly gisMapService: GisMapService,
+    private readonly gisMasterDataImportService: GisMasterDataImportService,
+  ) {}
 
   @Get()
   @Permissions('gis.read')
@@ -76,6 +84,24 @@ export class GisMapController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     return this.gisMapService.uploadFile(id, file);
+  }
+
+  @Post(':id/master-data/preview')
+  @Permissions('gis.manage')
+  previewMasterData(
+    @Param('id') id: string,
+    @Body() dto: GisMasterDataParentDto,
+  ) {
+    return this.gisMasterDataImportService.preview(id, dto);
+  }
+
+  @Post(':id/master-data/import')
+  @Permissions('gis.manage')
+  importMasterData(
+    @Param('id') id: string,
+    @Body() dto: ImportGisMasterDataDto,
+  ) {
+    return this.gisMasterDataImportService.import(id, dto);
   }
 
   @Patch(':id')

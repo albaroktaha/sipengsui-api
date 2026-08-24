@@ -22,6 +22,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
+import { AssignRoleDto } from './dto/assign-role.dto';
+import { AssignPermissionDto } from './dto/assign-permission.dto';
+import { SyncPermissionsDto } from './dto/sync-permissions.dto';
 
 @ApiTags('Users')
 @Controller('users')
@@ -90,8 +93,8 @@ export class UsersController {
   @Roles('SUPER_ADMIN')
   @Permissions('users.manage')
   @ApiOperation({ summary: 'Assign role ke user' })
-  assignRole(@Param('id') id: string, @Body('roleId') roleId: string) {
-    return this.usersService.assignRole(id, roleId);
+  assignRole(@Param('id') id: string, @Body() dto: AssignRoleDto) {
+    return this.usersService.assignRole(id, dto.roleId);
   }
 
   @Delete(':id/roles/:roleId')
@@ -112,11 +115,8 @@ export class UsersController {
   @Roles('SUPER_ADMIN')
   @Permissions('users.manage')
   @ApiOperation({ summary: 'Assign permission ke user' })
-  assignPermission(
-    @Param('id') id: string,
-    @Body('permissionId') permissionId: string,
-  ) {
-    return this.usersService.assignPermission(id, permissionId);
+  assignPermission(@Param('id') id: string, @Body() dto: AssignPermissionDto) {
+    return this.usersService.assignPermission(id, dto.permissionId);
   }
 
   @Delete(':id/permissions/:permissionId')
@@ -138,10 +138,7 @@ export class UsersController {
   @Roles('SUPER_ADMIN')
   @Permissions('users.manage')
   @ApiOperation({ summary: 'Sinkronisasi semua permission user (replace all)' })
-  syncPermissions(
-    @Param('id') id: string,
-    @Body('permissionIds') permissionIds: string[],
-  ) {
-    return this.usersService.syncPermissions(id, permissionIds);
+  syncPermissions(@Param('id') id: string, @Body() dto: SyncPermissionsDto) {
+    return this.usersService.syncPermissions(id, dto.permissionIds);
   }
 }

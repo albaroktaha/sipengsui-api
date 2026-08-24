@@ -1,17 +1,21 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 
 import { Prisma, RekomtekStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 
 import { CreateRekomtekDto } from './dto/create-rekomtek.dto';
 import { UpdateRekomtekDto } from './dto/update-rekomtek.dto';
 import { QueryRekomtekDto } from './dto/query-rekomtek.dto';
 import { BerkasService } from './berkas.service';
+import { isAllowedGoogleDriveUrl } from './drive-url.util';
+import { isRekomtekStaff } from './rekomtek-access.util';
 
 @Injectable()
 export class RekomtekService {
@@ -25,10 +29,45 @@ export class RekomtekService {
     watershed: true,
     riverRegion: true,
     river: true,
-    berkas: true,
   };
 
-  async create(dto: CreateRekomtekDto) {
+  private accessSelect = {
+    id: true,
+    createdById: true,
+    status: true,
+  } as const;
+
+  /**
+   * Role yang boleh melihat / mengelola SEMUA rekomtek.
+   * User biasa (USER) hanya boleh melihat & mengelola rekomtek miliknya sendiri.
+   */
+  private isStaff(user: AuthenticatedUser): boolean {
+    return isRekomtekStaff(user);
+  }
+
+  async canAccess(
+    user: AuthenticatedUser,
+    id: string,
+    _opts: { forUpdate?: boolean } = {},
+  ) {
+    const rekomtek = await this.prisma.rekomtek.findUnique({
+      where: { id },
+      select: this.accessSelect,
+    });
+
+    if (!rekomtek) {
+      throw new NotFoundException('Rekomtek tidak ditemukan');
+    }
+
+    // Staff boleh akses semua; user biasa hanya miliknya sendiri.
+    if (!this.isStaff(user) && rekomtek.createdById !== user.userId) {
+      throw new ForbiddenException('Anda tidak memiliki akses ke rekomtek ini');
+    }
+
+    return rekomtek;
+  }
+
+  async create(dto: CreateRekomtekDto, user: AuthenticatedUser) {
     const existing = await this.prisma.rekomtek.findUnique({
       where: { nomor: dto.nomor },
     });
@@ -63,6 +102,7 @@ export class RekomtekService {
         parameters,
         fileUrl: dto.fileUrl,
         createdBy: dto.createdBy,
+        createdById: user.userId,
       },
       include: this.includeClause,
     });
@@ -81,11 +121,20 @@ export class RekomtekService {
     });
   }
 
-  async findAll(query: QueryRekomtekDto) {
+  async findAll(query: QueryRekomtekDto, user: AuthenticatedUser) {
     const where: Prisma.RekomtekWhereInput = {};
+
+    // Filter kepemilikan: user biasa hanya melihat miliknya sendiri.
+    if (!this.isStaff(user)) {
+      where.createdById = user.userId;
+    }
 
     if (query.status) {
       where.status = query.status;
+    }
+
+    if (query.jenisPermohonan) {
+      where.jenisPermohonan = query.jenisPermohonan as any;
     }
 
     if (query.stationId) {
@@ -135,7 +184,31 @@ export class RekomtekService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.rekomtek.findMany({
         where,
-        include: this.includeClause,
+        select: {
+          id: true,
+          nomor: true,
+          judul: true,
+          jenis: true,
+          jenisPermohonan: true,
+          deskripsi: true,
+          status: true,
+          stationId: true,
+          riverId: true,
+          customRiverName: true,
+          watershedId: true,
+          riverRegionId: true,
+          fileUrl: true,
+          createdBy: true,
+          createdById: true,
+          reviewedBy: true,
+          approvedBy: true,
+          reviewedAt: true,
+          approvedAt: true,
+          publishedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          station: { select: { id: true, name: true, code: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: query.limit,
@@ -143,8 +216,15 @@ export class RekomtekService {
       this.prisma.rekomtek.count({ where }),
     ]);
 
+    const progressByRekomtek = await this.berkasService.getProgressForRekomtekIds(
+      items.map((item) => item.id),
+    );
+
     return {
-      data: items,
+      data: items.map((item) => ({
+        ...item,
+        berkasProgress: progressByRekomtek[item.id],
+      })),
       meta: {
         page: query.page,
         limit: query.limit,
@@ -154,21 +234,27 @@ export class RekomtekService {
     };
   }
 
-  async findOne(id: string) {
-    const rekomtek = await this.prisma.rekomtek.findUnique({
+  async findOne(id: string, user: AuthenticatedUser) {
+    await this.canAccess(user, id);
+    return this.prisma.rekomtek.findUnique({
       where: { id },
       include: this.includeClause,
     });
-
-    if (!rekomtek) {
-      throw new NotFoundException('Rekomtek tidak ditemukan');
-    }
-
-    return rekomtek;
   }
 
-  async update(id: string, dto: UpdateRekomtekDto) {
-    await this.findOne(id);
+  async update(id: string, dto: UpdateRekomtekDto, user: AuthenticatedUser) {
+    const rekomtek = await this.canAccess(user, id, { forUpdate: true });
+
+    if (
+      !this.isStaff(user) &&
+      ![RekomtekStatus.DRAFT, RekomtekStatus.REJECTED].some(
+        (status) => status === rekomtek.status,
+      )
+    ) {
+      throw new ForbiddenException(
+        'Permohonan hanya dapat diubah saat DRAFT atau dikembalikan untuk revisi',
+      );
+    }
 
     if (dto.nomor) {
       const existing = await this.prisma.rekomtek.findUnique({
@@ -216,19 +302,45 @@ export class RekomtekService {
     });
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: string, user: AuthenticatedUser) {
+    await this.canAccess(user, id, { forUpdate: true });
 
     return this.prisma.rekomtek.delete({ where: { id } });
   }
 
-  async submit(id: string) {
-    const rekomtek = await this.findOne(id);
+  async submit(id: string, user: AuthenticatedUser) {
+    const rekomtek = await this.canAccess(user, id, { forUpdate: true });
 
-    if (rekomtek.status !== RekomtekStatus.DRAFT) {
+    if (
+      ![RekomtekStatus.DRAFT, RekomtekStatus.REJECTED].some(
+        (status) => status === rekomtek.status,
+      )
+    ) {
       throw new BadRequestException(
-        'Hanya rekomtek dengan status DRAFT yang dapat diajukan untuk review',
+        'Hanya rekomtek DRAFT atau yang dikembalikan untuk revisi yang dapat diajukan ulang',
       );
+    }
+
+    const requiredBerkas = await this.prisma.rekomtekBerkas.findMany({
+      where: { rekomtekId: id, isRequired: true },
+      select: { id: true, kode: true, uraian: true, driveUrl: true },
+    });
+
+    const missingBerkas = requiredBerkas
+      .filter(
+        (berkas) => !isAllowedGoogleDriveUrl(berkas.driveUrl),
+      )
+      .map((berkas) => ({
+        id: berkas.id,
+        kode: berkas.kode,
+        uraian: berkas.uraian,
+      }));
+
+    if (missingBerkas.length > 0) {
+      throw new BadRequestException({
+        message: 'Semua berkas wajib harus memiliki link Google Drive yang valid',
+        missingBerkas,
+      });
     }
 
     return this.prisma.rekomtek.update({
@@ -238,8 +350,8 @@ export class RekomtekService {
     });
   }
 
-  async approve(id: string, reviewedBy: string) {
-    const rekomtek = await this.findOne(id);
+  async approve(id: string, reviewedBy: string, user: AuthenticatedUser) {
+    const rekomtek = await this.canAccess(user, id);
 
     if (rekomtek.status !== RekomtekStatus.REVIEW) {
       throw new BadRequestException(
@@ -258,8 +370,8 @@ export class RekomtekService {
     });
   }
 
-  async reject(id: string, reviewedBy: string) {
-    const rekomtek = await this.findOne(id);
+  async reject(id: string, reviewedBy: string, user: AuthenticatedUser) {
+    const rekomtek = await this.canAccess(user, id);
 
     if (rekomtek.status !== RekomtekStatus.REVIEW) {
       throw new BadRequestException(
@@ -278,8 +390,8 @@ export class RekomtekService {
     });
   }
 
-  async publish(id: string, approvedBy: string) {
-    const rekomtek = await this.findOne(id);
+  async publish(id: string, approvedBy: string, user: AuthenticatedUser) {
+    const rekomtek = await this.canAccess(user, id);
 
     if (rekomtek.status !== RekomtekStatus.APPROVED) {
       throw new BadRequestException(

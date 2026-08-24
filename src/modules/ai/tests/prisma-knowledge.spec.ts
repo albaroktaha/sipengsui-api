@@ -122,9 +122,7 @@ describe('PrismaKnowledgeService', () => {
   });
 
   it('getSummaryChunk menghitung jumlah data dari database', async () => {
-    prisma.riverRegion.count
-      .mockResolvedValueOnce(5)
-      .mockResolvedValueOnce(4);
+    prisma.riverRegion.count.mockResolvedValueOnce(5).mockResolvedValueOnce(4);
     prisma.watershed.count.mockResolvedValue(5);
     prisma.river.count.mockResolvedValue(123);
     prisma.station.count.mockResolvedValue(0);

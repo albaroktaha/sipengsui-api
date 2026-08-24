@@ -1,22 +1,14 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   Param,
   Patch,
-  Post,
   Query,
-  UploadedFile,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { memoryStorage } from 'multer';
 import {
   ApiBearerAuth,
-  ApiBody,
-  ApiConsumes,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
@@ -24,10 +16,12 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Permissions } from '../auth/decorators/permissions.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 
 import { BerkasTemplateService } from './berkas-template.service';
 import { BerkasService } from './berkas.service';
-import { BerkasFileService } from './berkas-file.service';
+import { RekomtekService } from './rekomtek.service';
 import {
   UpdateBerkasDto,
   UpdateBerkasIsCompleteDto,
@@ -41,9 +35,9 @@ import {
 @Controller('rekomtek')
 export class BerkasController {
   constructor(
+    private readonly rekomtekService: RekomtekService,
     private readonly berkasTemplateService: BerkasTemplateService,
     private readonly berkasService: BerkasService,
-    private readonly berkasFileService: BerkasFileService,
   ) {}
 
   // ── Template ───────────────────────────────────────────────
@@ -69,37 +63,50 @@ export class BerkasController {
   @Get(':id/berkas')
   @Permissions('rekomtek.read')
   @ApiOperation({ summary: 'Daftar checklist berkas untuk rekomtek tertentu' })
-  getBerkas(@Param('id') id: string) {
-    return this.berkasService.getByRekomtekId(id);
+  async getBerkas(
+    @Param('id') id: string,
+    @Query() query: BerkasQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    await this.rekomtekService.canAccess(user, id);
+    return this.berkasService.getByRekomtekId(id, query);
   }
 
   @Get(':id/berkas/progress')
   @Permissions('rekomtek.read')
   @ApiOperation({ summary: 'Progress checklist berkas rekomtek' })
-  getProgress(@Param('id') id: string) {
+  async getProgress(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    await this.rekomtekService.canAccess(user, id);
     return this.berkasService.getProgress(id);
   }
 
   @Patch(':id/berkas/:berkasId')
   @Permissions('rekomtek.berkas')
-  @ApiOperation({ summary: 'Update status/notes checklist berkas' })
-  updateBerkas(
+  @ApiOperation({ summary: 'Update link atau status checklist berkas' })
+  async updateBerkas(
     @Param('id') id: string,
     @Param('berkasId') berkasId: string,
     @Body() dto: UpdateBerkasDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.berkasService.update(id, berkasId, dto);
+    await this.rekomtekService.canAccess(user, id, { forUpdate: true });
+    return this.berkasService.update(id, berkasId, dto, user);
   }
 
   @Patch(':id/berkas/:berkasId/complete')
   @Permissions('rekomtek.berkas')
   @ApiOperation({ summary: 'Centang / uncentang kelengkapan berkas' })
-  setComplete(
+  async setComplete(
     @Param('id') id: string,
     @Param('berkasId') berkasId: string,
     @Body() dto: UpdateBerkasIsCompleteDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.berkasService.update(id, berkasId, dto);
+    await this.rekomtekService.canAccess(user, id, { forUpdate: true });
+    return this.berkasService.update(id, berkasId, dto, user);
   }
 
   @Patch(':id/berkas/:berkasId/return')
@@ -107,45 +114,14 @@ export class BerkasController {
   @ApiOperation({
     summary: 'Kembalikan berkas untuk direvisi (uncheck + catatan revisi)',
   })
-  returnForRevision(
+  async returnForRevision(
     @Param('id') id: string,
     @Param('berkasId') berkasId: string,
     @Body() dto: ReturnForRevisionDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.berkasService.returnForRevision(id, berkasId, dto);
+    await this.rekomtekService.canAccess(user, id, { forUpdate: true });
+    return this.berkasService.returnForRevision(id, berkasId, dto, user);
   }
 
-  // ── File Upload ────────────────────────────────────────────
-
-  @Post(':id/berkas/:berkasId/upload')
-  @Permissions('rekomtek.berkas')
-  @ApiOperation({ summary: 'Upload file untuk berkas tertentu' })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        file: { type: 'string', format: 'binary' },
-      },
-    },
-  })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: memoryStorage(),
-    }),
-  )
-  uploadFile(
-    @Param('id') id: string,
-    @Param('berkasId') berkasId: string,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
-    return this.berkasFileService.upload(id, berkasId, file);
-  }
-
-  @Delete(':id/berkas/:berkasId/file')
-  @Permissions('rekomtek.berkas')
-  @ApiOperation({ summary: 'Hapus file dari berkas' })
-  deleteFile(@Param('id') id: string, @Param('berkasId') berkasId: string) {
-    return this.berkasFileService.delete(id, berkasId);
-  }
 }

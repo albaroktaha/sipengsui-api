@@ -20,7 +20,9 @@ export class UsersService {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { organization: { contains: search, mode: 'insensitive' } },
         { email: { contains: search, mode: 'insensitive' } },
       ];
     }
@@ -146,6 +148,12 @@ export class UsersService {
   async assignRole(userId: string, roleId: string) {
     await this.findById(userId);
 
+    // Validasi role benar-benar ada
+    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    if (!role) {
+      throw new NotFoundException('Role tidak ditemukan');
+    }
+
     // Cek apakah sudah punya role ini
     const existing = await this.prisma.userRole.findUnique({
       where: { userId_roleId: { userId, roleId } },
@@ -174,9 +182,28 @@ export class UsersService {
   async removeRole(userId: string, roleId: string) {
     await this.findById(userId);
 
-    return this.prisma.userRole.delete({
+    const userRole = await this.prisma.userRole.findUnique({
       where: { userId_roleId: { userId, roleId } },
     });
+
+    if (!userRole) {
+      throw new NotFoundException('User tidak memiliki role tersebut');
+    }
+
+    await this.prisma.userRole.delete({
+      where: { userId_roleId: { userId, roleId } },
+    });
+
+    // Jika role yang dihapus adalah role primer, kosongkan roleId.
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (user?.roleId === roleId) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { roleId: null },
+      });
+    }
+
+    return { success: true };
   }
 
   // ─── Permission Management ────────────────────────────────
@@ -190,6 +217,14 @@ export class UsersService {
 
   async assignPermission(userId: string, permissionId: string) {
     await this.findById(userId);
+
+    // Validasi permission benar-benar ada
+    const permission = await this.prisma.permission.findUnique({
+      where: { id: permissionId },
+    });
+    if (!permission) {
+      throw new NotFoundException('Permission tidak ditemukan');
+    }
 
     const existing = await this.prisma.userPermission.findUnique({
       where: { userId_permissionId: { userId, permissionId } },

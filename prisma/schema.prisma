@@ -74,6 +74,13 @@ enum DisasterType {
   LAINNYA
 }
 
+enum NewsStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}
+
 model Rekomtek {
   id String @id @default(uuid())
 
@@ -81,9 +88,9 @@ model Rekomtek {
   // Dokumen Identity
   // ===========================
 
-  nomor  String @unique
-  judul  String
-  jenis  String
+  nomor     String  @unique
+  judul     String
+  jenis     String
   deskripsi String?
 
   // ===========================
@@ -102,19 +109,19 @@ model Rekomtek {
   // Referensi Geografis
   // ===========================
 
-  stationId    String?
-  station      Station?    @relation(fields: [stationId], references: [id], onDelete: SetNull)
+  stationId String?
+  station   Station? @relation(fields: [stationId], references: [id], onDelete: SetNull)
 
-  riverId      String?
-  river        River?      @relation(fields: [riverId], references: [id], onDelete: SetNull)
+  riverId String?
+  river   River?  @relation(fields: [riverId], references: [id], onDelete: SetNull)
 
   customRiverName String?
 
-  watershedId  String?
-  watershed    Watershed?  @relation(fields: [watershedId], references: [id], onDelete: SetNull)
+  watershedId String?
+  watershed   Watershed? @relation(fields: [watershedId], references: [id], onDelete: SetNull)
 
   riverRegionId String?
-  riverRegion  RiverRegion? @relation(fields: [riverRegionId], references: [id], onDelete: SetNull)
+  riverRegion   RiverRegion? @relation(fields: [riverRegionId], references: [id], onDelete: SetNull)
 
   // ===========================
   // Data Analisis
@@ -139,9 +146,11 @@ model Rekomtek {
   // Audit Workflow
   // ===========================
 
-  createdBy  String
-  reviewedBy String?
-  approvedBy String?
+  createdBy     String
+  createdById   String?
+  createdByUser User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedBy    String?
+  approvedBy    String?
 
   reviewedAt  DateTime?
   approvedAt  DateTime?
@@ -159,18 +168,25 @@ model Rekomtek {
   @@index([riverId])
   @@index([watershedId])
   @@index([riverRegionId])
+  @@index([createdById])
   @@index([createdAt])
 }
 
 model User {
   id String @id @default(uuid())
 
-  name     String
-  email    String @unique
-  password String
+  firstName    String
+  lastName     String
+  email        String  @unique
+  pendingEmail String?
+  password     String?
 
-  phone  String?
-  avatar String?
+  phone        String?
+  organization String?
+  address      String?
+  avatar       String?
+
+  accounts Account[]
 
   roleId String?
   role   Role?   @relation(fields: [roleId], references: [id])
@@ -180,12 +196,20 @@ model User {
 
   termsAcceptedAt DateTime?
 
-  lastLoginAt     DateTime?
-  lastActivityAt  DateTime?
+  lastLoginAt    DateTime?
+  lastActivityAt DateTime?
 
   // Multi-role & permissions
   userRoles       UserRole[]
   userPermissions UserPermission[]
+
+  // Rekomtek yang diajukan user
+  rekomteks Rekomtek[]
+
+
+  // Berita yang ditulis dan revisinya
+  newsArticles  NewsArticle[]         @relation("NewsArticleAuthor")
+  newsRevisions NewsArticleRevision[] @relation("NewsRevisionAuthor")
 
   // Email verification & password reset
   emailVerificationTokens EmailVerificationToken[]
@@ -193,6 +217,20 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                String   @id @default(uuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Role {
@@ -251,13 +289,13 @@ model UserPermission {
 
 // Token verifikasi email — dibuat saat register / kirim ulang
 model EmailVerificationToken {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token     String   @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@index([expiresAt])
@@ -265,13 +303,13 @@ model EmailVerificationToken {
 
 // Token reset password — siap untuk fitur lupa password
 model PasswordResetToken {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token     String   @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId])
 }
@@ -282,20 +320,20 @@ model DisasterReport {
   // Pelapor publik tidak wajib login, maka userId nullable
   userId String?
 
-  judul  String
-  jenis  DisasterType
+  judul     String
+  jenis     DisasterType
   deskripsi String
 
   // Identitas pelapor (publik)
   reporterName  String
   reporterPhone String
 
-  lokasi     Json? // { lat, lng, address, village, district }
-  severity   DisasterSeverity?
-  status     DisasterReportStatus @default(DRAFT)
+  lokasi   Json? // { lat, lng, address, village, district }
+  severity DisasterSeverity?
+  status   DisasterReportStatus @default(DRAFT)
 
   tanggalKejadian DateTime @default(now())
-  attachments      Json? // array of file URLs
+  attachments     Json? // array of file URLs
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -317,6 +355,9 @@ model RiverRegion {
 
   description String?
 
+  sourceGisMapId String?
+  sourceGisMap   GisMap? @relation("RiverRegionSourceMap", fields: [sourceGisMapId], references: [id], onDelete: SetNull)
+
   status Boolean @default(true)
 
   publishedAt DateTime?
@@ -326,6 +367,8 @@ model RiverRegion {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([sourceGisMapId])
 }
 
 model Watershed {
@@ -345,17 +388,22 @@ model Watershed {
 
   description String?
 
+  sourceGisMapId String?
+  sourceGisMap   GisMap? @relation("WatershedSourceMap", fields: [sourceGisMapId], references: [id], onDelete: SetNull)
+
   status Boolean @default(true)
 
   publishedAt DateTime?
 
   rivers River[]
 
-  stations Station[]
+  stations  Station[]
   rekomteks Rekomtek[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([sourceGisMapId])
 }
 
 model River {
@@ -382,6 +430,9 @@ model River {
 
   description String?
 
+  sourceGisMapId String?
+  sourceGisMap   GisMap? @relation("RiverSourceMap", fields: [sourceGisMapId], references: [id], onDelete: SetNull)
+
   status Boolean @default(true)
 
   publishedAt DateTime?
@@ -392,6 +443,8 @@ model River {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([sourceGisMapId])
 }
 
 model Station {
@@ -605,14 +658,14 @@ model RekomtekBerkasTemplate {
   id String @id @default(uuid())
 
   // Kategori
-  jenis            String          // GALIAN_C, APU, PLTA, PLTM, etc
-  jenisPermohonan  JenisPermohonan
+  jenis           String // GALIAN_C, APU, PLTA, PLTM, etc
+  jenisPermohonan JenisPermohonan
 
   // Identitas item
-  kode      String  // "1", "12.a", "12.b" — untuk display & grouping
-  nomorUrut Int     // untuk sorting
-  uraian    String  // Nama berkas / deskripsi
-  isRequired Boolean @default(true)
+  kode        String // "1", "12.a", "12.b" — untuk display & grouping
+  nomorUrut   Int // untuk sorting
+  uraian      String // Nama berkas / deskripsi
+  isRequired  Boolean @default(true)
   hasSubItems Boolean @default(false)
 
   // Relasi ke instance berkas (optional — untuk tracking)
@@ -639,16 +692,14 @@ model RekomtekBerkas {
   template   RekomtekBerkasTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   // Copy dari template (bisa diubah)
-  kode      String  // "1", "12.a"
-  nomorUrut Int
-  uraian    String
+  kode       String // "1", "12.a"
+  nomorUrut  Int
+  uraian     String
   isRequired Boolean @default(true)
 
   // Status kelengkapan
-  isComplete Boolean  @default(false)
-  fileUrl    String?
-  fileName   String?
-  fileSize   Int?
+  isComplete Boolean @default(false)
+  driveUrl   String?
   notes      String?
 
   // Revision tracking
@@ -658,7 +709,23 @@ model RekomtekBerkas {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([rekomtekId])
+  @@index([rekomtekId, nomorUrut, kode])
+}
+
+model RekomtekBerkasLinkHistory {
+  id String @id @default(uuid())
+
+  rekomtekBerkasId String
+
+  oldDriveUrl String?
+  newDriveUrl String?
+
+  changedById String
+  role        String
+  createdAt   DateTime @default(now())
+
+  @@index([rekomtekBerkasId, createdAt])
+  @@index([createdAt])
 }
 
 // ===========================
@@ -691,7 +758,7 @@ model Flowchart {
 // ===========================
 
 model GisMap {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   name        String
   category    String // PETA_POS_HIDROLOGI | PETA_WILAYAH_SUNGAI | ...
   description String?
@@ -705,12 +772,148 @@ model GisMap {
   geometry    Json?
   hasGeometry Boolean @default(false)
 
-  status      Boolean  @default(true)
+  status      Boolean   @default(true)
   publishedAt DateTime?
+
+  sourceRiverRegions RiverRegion[] @relation("RiverRegionSourceMap")
+  sourceWatersheds   Watershed[]   @relation("WatershedSourceMap")
+  sourceRivers       River[]       @relation("RiverSourceMap")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([category])
   @@index([status, publishedAt])
+}
+
+// ===========================
+// Berita Sipengsui
+// ===========================
+
+model NewsCategory {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  articles NewsArticle[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model NewsTag {
+  id       String  @id @default(uuid())
+  name     String  @unique
+  slug     String  @unique
+  isActive Boolean @default(true)
+
+  articles NewsArticleTag[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model NewsArticle {
+  id String @id @default(uuid())
+
+  title       String
+  slug        String  @unique
+  excerpt     String?
+  contentJson Json
+  contentHtml String
+
+  coverImageUrl     String?
+  coverImageAlt     String?
+  coverImageCaption String?
+
+  seoTitle       String?
+  seoDescription String?
+  canonicalUrl   String?
+
+  status      NewsStatus @default(DRAFT)
+  isFeatured  Boolean    @default(false)
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  archivedAt  DateTime?
+  viewCount   Int        @default(0)
+
+  authorId String
+  author   User   @relation("NewsArticleAuthor", fields: [authorId], references: [id])
+
+  categoryId String?
+  category   NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  tags      NewsArticleTag[]
+  revisions NewsArticleRevision[]
+  redirects NewsSlugRedirect[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([publishedAt])
+  @@index([categoryId])
+  @@index([authorId])
+  @@index([isFeatured, status])
+}
+
+model NewsArticleTag {
+  articleId String
+  tagId     String
+
+  article NewsArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag     NewsTag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([articleId, tagId])
+  @@index([tagId])
+}
+
+model NewsArticleRevision {
+  id        String      @id @default(uuid())
+  articleId String
+  article   NewsArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  version     Int
+  isDraft     Boolean @default(true)
+  title       String
+  slug        String
+  excerpt     String?
+  contentJson Json
+  contentHtml String
+
+  coverImageUrl     String?
+  coverImageAlt     String?
+  coverImageCaption String?
+  seoTitle          String?
+  seoDescription    String?
+  canonicalUrl      String?
+  categoryId        String?
+  tagIds            Json      @default("[]")
+  scheduledAt       DateTime?
+  publishedAt       DateTime?
+  note              String?
+
+  createdById String
+  createdBy   User   @relation("NewsRevisionAuthor", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([articleId, version])
+  @@index([articleId, createdAt])
+  @@index([articleId, isDraft])
+}
+
+model NewsSlugRedirect {
+  id        String      @id @default(uuid())
+  articleId String
+  article   NewsArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  fromSlug  String      @unique
+
+  createdAt DateTime @default(now())
+
+  @@index([articleId])
 }

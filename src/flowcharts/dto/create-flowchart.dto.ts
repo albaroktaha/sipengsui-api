@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsHexColor,
   IsIn,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
@@ -12,6 +13,16 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+export class FlowNodePositionDto {
+  @ApiProperty({ description: 'Posisi horizontal pada canvas', example: 120 })
+  @IsNumber()
+  x!: number;
+
+  @ApiProperty({ description: 'Posisi vertikal pada canvas', example: 240 })
+  @IsNumber()
+  y!: number;
+}
 
 export class FlowNodeDto {
   @ApiProperty({ description: 'ID unik node', example: 'A' })
@@ -58,6 +69,15 @@ export class FlowNodeDto {
   @IsOptional()
   @IsHexColor()
   textColor?: string;
+
+  @ApiPropertyOptional({
+    description: 'Posisi node pada canvas editor',
+    type: FlowNodePositionDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FlowNodePositionDto)
+  position?: FlowNodePositionDto;
 }
 
 export class FlowEdgeDto {
@@ -78,6 +98,24 @@ export class FlowEdgeDto {
   @MinLength(1)
   @MaxLength(50)
   target!: string;
+
+  @ApiPropertyOptional({
+    description: 'Handle asal untuk menjaga arah routing panah',
+    example: 'source-right',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  sourceHandle?: string;
+
+  @ApiPropertyOptional({
+    description: 'Handle tujuan untuk menjaga arah routing panah',
+    example: 'target-left',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  targetHandle?: string;
 
   @ApiPropertyOptional({
     description: 'Label pada panah (mis. durasi)',

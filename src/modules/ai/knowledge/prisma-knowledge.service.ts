@@ -44,21 +44,16 @@ export class PrismaKnowledgeService implements KnowledgeRetriever {
    * Selalu disertakan sebagai konteks agar model tidak mengarang jumlah.
    */
   async getSummaryChunk(): Promise<KnowledgeChunk | null> {
-    const [
-      riverRegions,
-      riverRegionsPublished,
-      watersheds,
-      rivers,
-      stations,
-    ] = await Promise.all([
-      this.prisma.riverRegion.count(),
-      this.prisma.riverRegion.count({
-        where: { status: true, publishedAt: { not: null } },
-      }),
-      this.prisma.watershed.count(),
-      this.prisma.river.count(),
-      this.prisma.station.count(),
-    ]);
+    const [riverRegions, riverRegionsPublished, watersheds, rivers, stations] =
+      await Promise.all([
+        this.prisma.riverRegion.count(),
+        this.prisma.riverRegion.count({
+          where: { status: true, publishedAt: { not: null } },
+        }),
+        this.prisma.watershed.count(),
+        this.prisma.river.count(),
+        this.prisma.station.count(),
+      ]);
 
     const parts: string[] = [
       `Statistik data pada sistem SIPENGSUI saat ini:`,
@@ -68,9 +63,7 @@ export class PrismaKnowledgeService implements KnowledgeRetriever {
       `• Stasiun: ${stations}`,
     ];
     if (riverRegionsPublished !== riverRegions) {
-      parts.push(
-        `• Wilayah Sungai terpublikasi: ${riverRegionsPublished}`,
-      );
+      parts.push(`• Wilayah Sungai terpublikasi: ${riverRegionsPublished}`);
     }
 
     return {

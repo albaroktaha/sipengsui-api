@@ -7,6 +7,31 @@ interface SendMailOptions {
   html: string;
 }
 
+interface SendMailBehavior {
+  strict?: boolean;
+}
+
+type VerificationPurpose = 'registration' | 'email-change';
+
+interface VerificationEmailOptions {
+  strict?: boolean;
+  purpose?: VerificationPurpose;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[character] ?? character,
+  );
+}
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
@@ -26,6 +51,12 @@ export class MailService {
         host,
         port: Number(process.env.MAIL_PORT ?? 587),
         secure: process.env.MAIL_SECURE === 'true',
+        requireTLS: process.env.MAIL_REQUIRE_TLS === 'true',
+        connectionTimeout: Number(
+          process.env.MAIL_CONNECTION_TIMEOUT_MS ?? 10000,
+        ),
+        greetingTimeout: Number(process.env.MAIL_GREETING_TIMEOUT_MS ?? 10000),
+        socketTimeout: Number(process.env.MAIL_SOCKET_TIMEOUT_MS ?? 10000),
         auth: process.env.MAIL_USER
           ? {
               user: process.env.MAIL_USER,
@@ -36,7 +67,10 @@ export class MailService {
     }
   }
 
-  async sendMail({ to, subject, html }: SendMailOptions): Promise<void> {
+  async sendMail(
+    { to, subject, html }: SendMailOptions,
+    behavior: SendMailBehavior = {},
+  ): Promise<void> {
     const from = process.env.MAIL_FROM ?? 'Sipengsui <noreply@sipengsui.id>';
 
     if (!this.transporter) {
@@ -50,6 +84,9 @@ export class MailService {
       this.logger.log(`Email terkirim ke ${to}: ${subject}`);
     } catch (error) {
       this.logger.error(`Gagal mengirim email ke ${to}`, error as Error);
+      if (behavior.strict) {
+        throw new Error('Email verifikasi gagal dikirim.');
+      }
     }
   }
 
@@ -57,10 +94,17 @@ export class MailService {
     email: string,
     name: string,
     token: string,
+    provider?: 'google' | 'github',
+    options: VerificationEmailOptions = {},
   ): Promise<void> {
     const appUrl = process.env.APP_URL ?? 'http://localhost:3001';
-    const verifyUrl = `${appUrl}/verify-email?token=${token}`;
+    const params = new URLSearchParams({ token, email });
+    if (provider) params.set('provider', provider);
+    const verifyUrl = `${appUrl}/verify-email?${params}`;
 
+    const isEmailChange = options.purpose === 'email-change';
+    const safeName = escapeHtml(name);
+    const tokenTtlMinutes = Number(process.env.VERIFY_TOKEN_TTL_MINUTES ?? 60);
     const html = `
       <div style="font-family: Arial, Helvetica, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb;">
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 20px;">
@@ -70,10 +114,10 @@ export class MailService {
             <div style="font-size: 12px; color: #6b7280;">Sistem Informasi Pengelolaan Sumber Daya Air</div>
           </div>
         </div>
-        <h2 style="color: #111827; margin: 0 0 12px;">Verifikasi Email Anda</h2>
-        <p style="color: #374151; font-size: 14px; line-height: 1.6;">Halo <strong>${name}</strong>,</p>
+        <h2 style="color: #111827; margin: 0 0 12px;">${isEmailChange ? 'Konfirmasi Perubahan Email' : 'Verifikasi Email Anda'}</h2>
+        <p style="color: #374151; font-size: 14px; line-height: 1.6;">Halo <strong>${safeName}</strong>,</p>
         <p style="color: #374151; font-size: 14px; line-height: 1.6;">
-          Terima kasih telah mendaftar di Sipengsui. Untuk mengaktifkan akun Anda, silakan klik tombol di bawah ini untuk memverifikasi alamat email.
+          ${isEmailChange ? 'Gunakan tombol di bawah ini untuk mengonfirmasi perubahan alamat email akun Sipengsui Anda.' : 'Terima kasih telah mendaftar di Sipengsui. Untuk mengaktifkan akun Anda, silakan klik tombol di bawah ini untuk memverifikasi alamat email.'}
         </p>
         <div style="text-align: center; margin: 28px 0;">
           <a href="${verifyUrl}" style="display: inline-block; background: #166534; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: bold;">Verifikasi Email</a>
@@ -83,15 +127,18 @@ export class MailService {
           <span style="color: #166534;">${verifyUrl}</span>
         </p>
         <p style="color: #6b7280; font-size: 12px; line-height: 1.6; margin-top: 20px;">
-          Tautan ini berlaku selama 60 menit. Jika Anda tidak mendaftar di Sipengsui, abaikan email ini.
+          Tautan ini berlaku selama ${tokenTtlMinutes} menit. Jika Anda tidak mendaftar di Sipengsui, abaikan email ini.
         </p>
       </div>
     `;
 
-    await this.sendMail({
-      to: email,
-      subject: 'Verifikasi Email — Sipengsui',
-      html,
-    });
+    await this.sendMail(
+      {
+        to: email,
+        subject: `${isEmailChange ? 'Konfirmasi Perubahan Email' : 'Verifikasi Email'} — Sipengsui`,
+        html,
+      },
+      { strict: options.strict },
+    );
   }
 }

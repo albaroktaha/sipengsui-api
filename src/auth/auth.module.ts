@@ -6,6 +6,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { EmailVerificationService } from './email-verification.service';
+import { OAuthService } from './oauth.service';
 
 import { UsersModule } from '../users/users.module';
 import { RolesGuard } from './guards/roles.guard';
@@ -34,6 +35,7 @@ import { MailModule } from '../mail/mail.module';
     RolesGuard,
     PermissionsGuard,
     EmailVerificationService,
+    OAuthService,
   ],
   exports: [RolesGuard, PermissionsGuard],
 })

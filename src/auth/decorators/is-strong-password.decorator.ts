@@ -6,9 +6,7 @@ import {
 } from 'class-validator';
 
 @ValidatorConstraint({ name: 'isStrongPassword', async: false })
-export class IsStrongPasswordConstraint
-  implements ValidatorConstraintInterface
-{
+export class IsStrongPasswordConstraint implements ValidatorConstraintInterface {
   validate(value: unknown): boolean {
     if (typeof value !== 'string') return false;
 

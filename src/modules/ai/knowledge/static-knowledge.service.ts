@@ -34,7 +34,7 @@ export class StaticKnowledgeService implements KnowledgeRetriever {
       id: 'sipengsui-rekomtek',
       title: 'Rekomendasi Teknis (Rekomtek)',
       content:
-        'Rekomtek adalah rekomendasi teknis yang diterbitkan SIPENGSUI melalui alur kerja: Pemohon → Dinas SDA → Evaluasi Kelengkapan Dokumen → Ekspose → Kajian & Evaluasi Teknis → Tinjauan Lapangan → Rapat Pembahasan → Draft Final Rekomtek (MS/TMS). Proses melibatkan Kepala Dinas SDA Provinsi, Kepala Bidang P/SA, dan Tim Teknis. Terdapat tahapan perbaikan dokumen bila tidak memenuhi persyaratan.',
+        'Rekomtek adalah rekomendasi teknis yang diterbitkan SIPENGSUI melalui alur kerja: Pemohon Rekomtek → Kepala Dinas SDA Provinsi → Kepala Bidang PJSA → Tim Teknis Bidang PJSA (ADM) → Evaluasi Kelengkapan Dokumen. Jika belum memenuhi, pemohon melengkapi dokumen; jika memenuhi, proses berlanjut ke Ekspose, Berita Acara Ekspose, Kajian & Evaluasi Teknis, dan pemeriksaan teknis. Setelah itu alur bercabang ke Rapat Pembahasan atau Tinjauan Lapangan sebelum Draft Final Rekomtek (MS/TMS) dan Dokumen Rekomtek (MS/TMS).',
       accessLevel: 'public',
     },
     {

@@ -26,6 +26,7 @@ import { PermissionsModule } from './permissions/permissions.module';
 import { RolesModule } from './roles/roles.module';
 import { DisasterReportsModule } from './disaster-reports/disaster-reports.module';
 import { AiModule } from './modules/ai/ai.module';
+import { NewsModule } from './news/news.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { AiModule } from './modules/ai/ai.module';
     RolesModule,
     DisasterReportsModule,
     AiModule,
+    NewsModule,
   ],
   controllers: [AppController],
   providers: [

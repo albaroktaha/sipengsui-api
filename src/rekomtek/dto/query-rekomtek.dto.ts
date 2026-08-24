@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -13,6 +14,14 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { RekomtekStatus } from '@prisma/client';
 
 export class QueryRekomtekDto {
+  @ApiPropertyOptional({
+    description: 'Filter berdasarkan jenis permohonan',
+    enum: ['IZIN_BARU', 'PERPANJANGAN'],
+  })
+  @IsOptional()
+  @IsIn(['IZIN_BARU', 'PERPANJANGAN'])
+  jenisPermohonan?: 'IZIN_BARU' | 'PERPANJANGAN';
+
   @ApiPropertyOptional({
     description: 'Filter berdasarkan status',
     enum: RekomtekStatus,

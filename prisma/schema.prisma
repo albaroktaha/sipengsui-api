@@ -50,6 +50,180 @@ enum RekomtekStatus {
   PUBLISHED
 }
 
+enum RekomtekWorkflowStage {
+  PEMOHON_DRAFT
+  MENUNGGU_PENUNJUKAN_POKJA
+  EVALUASI_DOKUMEN_AWAL
+  PERBAIKAN_AWAL_PEMOHON
+  EVALUASI_DOKUMEN_ULANG
+  PENYUSUNAN_SURAT_PENOLAKAN
+  DITOLAK
+  MENUNGGU_JADWAL_EKSPOSE
+  EKSPOSE_TERJADWAL
+  MENUNGGU_BA_EKSPOSE
+  VERIFIKASI_HASIL_EKSPOSE
+  PERBAIKAN_PASCA_EKSPOSE
+  VERIFIKASI_PERBAIKAN_PASCA_EKSPOSE
+  MENUNGGU_SPT_LAPANGAN
+  KUNJUNGAN_LAPANGAN_DITUGASKAN
+  MENUNGGU_BA_LAPANGAN
+  PERSIAPAN_SIDANG_REKOMTEK
+  MENUNGGU_BA_SIDANG_REKOMTEK
+  PENYUSUNAN_HASIL_REKOMTEK
+  PEMERIKSAAN_PEJABAT
+  MENUNGGU_PERSETUJUAN_ATASAN
+  DISETUJUI_ATASAN
+  DOKUMEN_REKOMTEK_TERBIT
+}
+
+enum RekomtekAssignmentMemberRole {
+  KOORDINATOR
+  ANGGOTA
+}
+
+enum RekomtekReviewType {
+  EVALUASI_AWAL
+  EVALUASI_ULANG
+  PASCA_EKSPOSE
+  VERIFIKASI_PASCA_EKSPOSE
+}
+
+enum RekomtekReviewDecision {
+  MEMENUHI
+  DIKEMBALIKAN
+  TIDAK_MEMENUHI
+}
+
+enum RekomtekFindingStatus {
+  TERBUKA
+  TERJAWAB
+  DITUTUP
+}
+
+enum RekomtekExposeMethod {
+  LURING
+  DARING
+  HIBRID
+}
+
+enum RekomtekExposeStatus {
+  DRAFT
+  TERJADWAL
+  SELESAI
+  DIBATALKAN
+}
+
+enum RekomtekFieldVisitStatus {
+  DITUGASKAN
+  SELESAI
+}
+
+enum RekomtekArtifactType {
+  UNDANGAN_EKSPOSE
+  BERITA_ACARA_EKSPOSE
+  SURAT_PENOLAKAN
+  SPT_LAPANGAN
+  BERITA_ACARA_LAPANGAN
+  BERITA_ACARA_SIDANG_REKOMTEK
+  SURAT_PERSETUJUAN
+  DRAFT_REKOMTEK
+  DOKUMEN_REKOMTEK
+}
+
+enum RekomtekArtifactStatus {
+  DRAFT
+  FINAL
+}
+
+enum WhatsAppIdentityStatus {
+  ACTIVE
+  UNLINKED
+  BLOCKED
+}
+
+enum WhatsAppConsentPurpose {
+  REKOMTEK_TRANSACTIONAL
+  SERVICE_CONVERSATION
+}
+
+enum WhatsAppConsentSource {
+  WEB
+  WHATSAPP
+  ADMIN
+}
+
+enum WhatsAppPairingStatus {
+  PENDING
+  CONSUMED
+  EXPIRED
+  REVOKED
+}
+
+enum WhatsAppConversationState {
+  MENU
+  AWAITING_PAIRING
+  AWAITING_TRANSACTIONAL_CONSENT
+  AWAITING_SERVICE_CONSENT
+}
+
+enum WhatsAppMessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  AUDIO
+  VIDEO
+  STICKER
+  LOCATION
+  CONTACTS
+  UNKNOWN
+}
+
+enum WhatsAppInboundStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+enum WhatsAppOutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DELIVERED
+  READ
+  RETRY
+  FAILED
+  DEAD
+  CANCELLED
+  STALE
+}
+
+enum WhatsAppDeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum BerkasSourceType {
+  UPLOAD
+  GOOGLE_DRIVE
+}
+
+enum BerkasTechnicalStatus {
+  VALID
+  INVALID
+  PENDING_CHECK
+}
+
+enum BerkasReviewStatus {
+  PENDING
+  VERIFIED
+  NEEDS_CORRECTION
+}
+
 enum DisasterReportStatus {
   DRAFT
   SUBMITTED
@@ -84,6 +258,14 @@ enum NewsStatus {
 model Rekomtek {
   id String @id @default(uuid())
 
+  // Relasi versi pengajuan: record lama tetap immutable saat Ajukan Ulang
+  revisionNumber    Int        @default(1)
+  sourceRevision    Int        @default(0)
+  checklistRevision Int        @default(0)
+  parentRekomtekId  String?
+  parentRekomtek    Rekomtek?  @relation("RekomtekRevisions", fields: [parentRekomtekId], references: [id], onDelete: Restrict)
+  revisions         Rekomtek[] @relation("RekomtekRevisions")
+
   // ===========================
   // Dokumen Identity
   // ===========================
@@ -97,7 +279,14 @@ model Rekomtek {
   // Status Workflow
   // ============================
 
-  status RekomtekStatus @default(DRAFT)
+  status                    RekomtekStatus         @default(DRAFT)
+  workflowStage             RekomtekWorkflowStage?
+  initialCorrectionCount    Int                    @default(0)
+  workflowVersion           Int                    @default(0)
+  workflowMigrationRequired Boolean                @default(false)
+  workflowMigrationNote     String?
+  approvedDraftArtifactId   String?
+  publishedArtifactId       String?
 
   // ===========================
   // Jenis Permohonan
@@ -140,7 +329,15 @@ model Rekomtek {
   // Checklist Berkas
   // ===========================
 
-  berkas RekomtekBerkas[]
+  berkas          RekomtekBerkas[]
+  teamAssignments RekomtekTeamAssignment[]
+  reviewRounds    RekomtekReviewRound[]
+  exposeSchedules RekomtekExposeSchedule[]
+  fieldVisits     RekomtekFieldVisit[]
+  councilSessions RekomtekCouncilSession[]
+  artifacts       RekomtekArtifact[]
+  workflowEvents  RekomtekWorkflowEvent[]
+  notifications   RekomtekNotification[]
 
   // ===========================
   // Audit Workflow
@@ -170,6 +367,9 @@ model Rekomtek {
   @@index([riverRegionId])
   @@index([createdById])
   @@index([createdAt])
+  @@index([parentRekomtekId])
+  @@index([workflowStage])
+  @@index([status, workflowStage])
 }
 
 model User {
@@ -203,9 +403,11 @@ model User {
   userRoles       UserRole[]
   userPermissions UserPermission[]
 
+  whatsappIdentity     WhatsAppIdentity?
+  whatsappPairingCodes WhatsAppPairingCode[]
+
   // Rekomtek yang diajukan user
   rekomteks Rekomtek[]
-
 
   // Berita yang ditulis dan revisinya
   newsArticles  NewsArticle[]         @relation("NewsArticleAuthor")
@@ -668,6 +870,14 @@ model RekomtekBerkasTemplate {
   isRequired  Boolean @default(true)
   hasSubItems Boolean @default(false)
 
+  // Kebijakan sumber dan validasi per item
+  allowedSourceTypes   Json   @default("[\"GOOGLE_DRIVE\"]")
+  sensitivity          String @default("ORDINARY")
+  accessPolicy         String @default("DRIVE_PUBLIC_ONLY")
+  allowedMimeTypes     Json?
+  maxFileSize          Int?
+  allowedExportFormats Json?
+
   // Relasi ke instance berkas (optional — untuk tracking)
   berkasItems RekomtekBerkas[]
 
@@ -697,19 +907,40 @@ model RekomtekBerkas {
   uraian     String
   isRequired Boolean @default(true)
 
+  // Snapshot kebijakan template
+  allowedSourceTypes   Json   @default("[\"GOOGLE_DRIVE\"]")
+  sensitivity          String @default("ORDINARY")
+  accessPolicy         String @default("DRIVE_PUBLIC_ONLY")
+  allowedMimeTypes     Json?
+  maxFileSize          Int?
+  allowedExportFormats Json?
+
   // Status kelengkapan
-  isComplete Boolean @default(false)
-  driveUrl   String?
-  notes      String?
+  isComplete       Boolean               @default(false)
+  reviewStatus     BerkasReviewStatus    @default(PENDING)
+  technicalStatus  BerkasTechnicalStatus @default(PENDING_CHECK)
+  technicalCode    String?
+  technicalMessage String?
+  checkedAt        DateTime?
+  sourceVersion    Int                   @default(0)
+  sourceType       BerkasSourceType?
+  driveUrl         String?
+  driveFileId      String?
+  driveResourceKey String?
+  storageKey       String?
+  notes            String?
 
   // Revision tracking
   revisionNote String?
   returnedAt   DateTime?
 
+  reviewFindings RekomtekReviewFinding[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([rekomtekId, nomorUrut, kode])
+  @@index([rekomtekId, technicalStatus])
 }
 
 model RekomtekBerkasLinkHistory {
@@ -717,8 +948,15 @@ model RekomtekBerkasLinkHistory {
 
   rekomtekBerkasId String
 
-  oldDriveUrl String?
-  newDriveUrl String?
+  oldDriveUrl     String?
+  newDriveUrl     String?
+  oldSourceType   BerkasSourceType?
+  newSourceType   BerkasSourceType?
+  oldStorageKey   String?
+  newStorageKey   String?
+  changeReason    String?
+  technicalStatus BerkasTechnicalStatus?
+  technicalCode   String?
 
   changedById String
   role        String
@@ -726,6 +964,228 @@ model RekomtekBerkasLinkHistory {
 
   @@index([rekomtekBerkasId, createdAt])
   @@index([createdAt])
+}
+
+// ===========================
+// Rekomtek Workflow
+// ===========================
+
+model RekomtekTeamAssignment {
+  id String @id @default(uuid())
+
+  rekomtekId String
+  rekomtek   Rekomtek @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+
+  assignedById  String
+  coordinatorId String
+  purpose       String
+  startsAt      DateTime  @default(now())
+  endsAt        DateTime?
+  isActive      Boolean   @default(true)
+
+  members RekomtekTeamMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rekomtekId, isActive])
+  @@index([coordinatorId, isActive])
+}
+
+model RekomtekTeamMember {
+  id String @id @default(uuid())
+
+  assignmentId String
+  assignment   RekomtekTeamAssignment       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  userId       String
+  role         RekomtekAssignmentMemberRole
+  activeFrom   DateTime                     @default(now())
+  activeUntil  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([assignmentId, userId])
+  @@index([userId, activeUntil])
+}
+
+model RekomtekReviewRound {
+  id String @id @default(uuid())
+
+  rekomtekId  String
+  rekomtek    Rekomtek                @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  type        RekomtekReviewType
+  roundNumber Int
+  decision    RekomtekReviewDecision?
+  summary     String?
+  createdById String
+  closedById  String?
+  openedAt    DateTime                @default(now())
+  closedAt    DateTime?
+
+  findings RekomtekReviewFinding[]
+
+  @@unique([rekomtekId, type, roundNumber])
+  @@index([rekomtekId, type, openedAt])
+}
+
+model RekomtekReviewFinding {
+  id String @id @default(uuid())
+
+  reviewRoundId     String
+  reviewRound       RekomtekReviewRound   @relation(fields: [reviewRoundId], references: [id], onDelete: Cascade)
+  rekomtekBerkasId  String?
+  rekomtekBerkas    RekomtekBerkas?       @relation(fields: [rekomtekBerkasId], references: [id], onDelete: SetNull)
+  note              String
+  applicantResponse String?
+  status            RekomtekFindingStatus @default(TERBUKA)
+  createdById       String
+  resolvedById      String?
+  createdAt         DateTime              @default(now())
+  resolvedAt        DateTime?
+
+  @@index([reviewRoundId, status])
+  @@index([rekomtekBerkasId, status])
+}
+
+model RekomtekExposeSchedule {
+  id String @id @default(uuid())
+
+  rekomtekId           String
+  rekomtek             Rekomtek             @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  startsAt             DateTime
+  endsAt               DateTime
+  timeZone             String               @default("Asia/Jakarta")
+  method               RekomtekExposeMethod
+  venue                String?
+  meetingUrl           String?
+  agenda               String
+  participants         Json
+  responsibleUserId    String
+  invitationNumber     String?
+  invitationArtifactId String?
+  status               RekomtekExposeStatus @default(DRAFT)
+  actualStartsAt       DateTime?
+  actualEndsAt         DateTime?
+  notes                String?
+  cancellationReason   String?
+  createdById          String
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  scheduleVersion Int @default(1)
+
+  whatsappOutbox WhatsAppOutbox[]
+
+  @@index([rekomtekId, status, startsAt])
+  @@index([responsibleUserId, status, startsAt])
+}
+
+model RekomtekFieldVisit {
+  id String @id @default(uuid())
+
+  rekomtekId        String
+  rekomtek          Rekomtek                 @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  sptNumber         String                   @unique
+  issuedAt          DateTime
+  petugasId         String
+  location          String
+  scheduledStartsAt DateTime
+  scheduledEndsAt   DateTime
+  scope             String
+  artifactId        String?
+  status            RekomtekFieldVisitStatus @default(DITUGASKAN)
+  realizedAt        DateTime?
+  realizationNotes  String?
+  createdById       String
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  @@index([rekomtekId, status])
+  @@index([petugasId, status])
+}
+
+model RekomtekCouncilSession {
+  id String @id @default(uuid())
+
+  rekomtekId   String
+  rekomtek     Rekomtek @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  scheduledAt  DateTime
+  completedAt  DateTime
+  participants Json
+  decision     String
+  notes        String?
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  @@index([rekomtekId, completedAt])
+}
+
+model RekomtekArtifact {
+  id String @id @default(uuid())
+
+  rekomtekId       String
+  rekomtek         Rekomtek               @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  type             RekomtekArtifactType
+  version          Int
+  fileName         String
+  storageKey       String
+  mimeType         String
+  fileSize         Int
+  checksum         String
+  technicalStatus  BerkasTechnicalStatus  @default(PENDING_CHECK)
+  stage            RekomtekWorkflowStage
+  status           RekomtekArtifactStatus @default(DRAFT)
+  sourceArtifactId String?
+  createdById      String
+  finalizedById    String?
+  finalizedAt      DateTime?
+  metadata         Json?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@unique([rekomtekId, type, version])
+  @@index([rekomtekId, type, status])
+  @@index([storageKey])
+}
+
+model RekomtekWorkflowEvent {
+  id String @id @default(uuid())
+
+  rekomtekId       String
+  rekomtek         Rekomtek               @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  fromStage        RekomtekWorkflowStage?
+  toStage          RekomtekWorkflowStage
+  action           String
+  actorId          String
+  actorRole        String
+  actorPermissions Json?
+  reason           String?
+  metadata         Json?
+  createdAt        DateTime               @default(now())
+
+  whatsappOutbox WhatsAppOutbox[]
+
+  @@index([rekomtekId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model RekomtekNotification {
+  id String @id @default(uuid())
+
+  rekomtekId  String
+  rekomtek    Rekomtek              @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  recipientId String
+  stage       RekomtekWorkflowStage
+  title       String
+  message     String
+  eventId     String?
+  readAt      DateTime?
+  createdAt   DateTime              @default(now())
+
+  whatsappOutbox WhatsAppOutbox[]
+
+  @@index([recipientId, readAt, createdAt])
+  @@index([rekomtekId, createdAt])
 }
 
 // ===========================
@@ -905,6 +1365,267 @@ model NewsArticleRevision {
   @@unique([articleId, version])
   @@index([articleId, createdAt])
   @@index([articleId, isDraft])
+}
+
+// ===========================
+// WhatsApp Bot MVP
+// ===========================
+
+model WhatsAppIdentity {
+  id String @id @default(uuid())
+
+  phoneE164    String  @unique
+  providerWaId String? @unique
+  userId       String? @unique
+  user         User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  status     WhatsAppIdentityStatus @default(ACTIVE)
+  verifiedAt DateTime?
+  linkedAt   DateTime?
+  unlinkedAt DateTime?
+  blockedAt  DateTime?
+  lastSeenAt DateTime?
+
+  pairingAttemptCount           Int       @default(0)
+  pairingAttemptWindowStartedAt DateTime?
+
+  consents       WhatsAppConsent[]
+  consentAudits  WhatsAppConsentAuditEvent[]
+  identityAudits WhatsAppIdentityAuditEvent[]
+  conversation   WhatsAppConversation?
+  inboundEvents  WhatsAppInboundEvent[]
+  outboxMessages WhatsAppOutbox[]
+  outboxSkips    WhatsAppOutboxSkipEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, verifiedAt])
+  @@index([userId, status])
+}
+
+model WhatsAppConsent {
+  id          String                 @id @default(uuid())
+  identityId  String
+  identity    WhatsAppIdentity       @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  purpose     WhatsAppConsentPurpose
+  active      Boolean                @default(false)
+  source      WhatsAppConsentSource
+  textVersion String
+  actorUserId String?
+  optedInAt   DateTime?
+  optedOutAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([identityId, purpose])
+  @@index([identityId, purpose, active])
+}
+
+model WhatsAppPairingCode {
+  id       String @id @default(uuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash String @unique
+
+  status        WhatsAppPairingStatus @default(PENDING)
+  expiresAt     DateTime
+  attemptCount  Int                   @default(0)
+  maxAttempts   Int                   @default(5)
+  lastAttemptAt DateTime?
+  consumedAt    DateTime?
+  revokedAt     DateTime?
+  createdAt     DateTime              @default(now())
+
+  @@index([userId, status, expiresAt])
+  @@index([codeHash, status, expiresAt])
+}
+
+model WhatsAppConsentAuditEvent {
+  id          String                 @id @default(uuid())
+  identityId  String
+  identity    WhatsAppIdentity       @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  purpose     WhatsAppConsentPurpose
+  active      Boolean
+  source      WhatsAppConsentSource
+  textVersion String
+  actorUserId String?
+  createdAt   DateTime               @default(now())
+
+  @@index([identityId, purpose, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model WhatsAppIdentityAuditEvent {
+  id          String           @id @default(uuid())
+  identityId  String
+  identity    WhatsAppIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  action      String
+  actorUserId String?
+  metadata    Json?
+  createdAt   DateTime         @default(now())
+
+  @@index([identityId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model WhatsAppConversation {
+  id                           String                    @id @default(uuid())
+  identityId                   String                    @unique
+  identity                     WhatsAppIdentity          @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  state                        WhatsAppConversationState @default(MENU)
+  stateExpiresAt               DateTime?
+  serviceWindowExpiresAt       DateTime?
+  lastInboundAt                DateTime?
+  lastOutboundAt               DateTime?
+  lastMessageAt                DateTime?
+  aiRequestCount               Int                       @default(0)
+  aiRequestWindowStartedAt     DateTime?
+  statusRequestCount           Int                       @default(0)
+  statusRequestWindowStartedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([state, stateExpiresAt])
+  @@index([serviceWindowExpiresAt])
+}
+
+model WhatsAppInboundEvent {
+  id                String                @id @default(uuid())
+  providerRequestId String                @unique
+  eventName         String
+  sessionName       String
+  providerEngine    String?
+  providerEventId   String                @unique
+  providerMessageId String?               @unique
+  identityId        String
+  identity          WhatsAppIdentity      @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  messageType       WhatsAppMessageType
+  textBody          String?
+  payloadDigest     String
+  providerTimestamp DateTime?
+  receivedAt        DateTime              @default(now())
+  status            WhatsAppInboundStatus @default(RECEIVED)
+  attemptCount      Int                   @default(0)
+  nextAttemptAt     DateTime?             @default(now())
+  errorCode         String?
+  processedAt       DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@index([identityId, createdAt])
+  @@index([status, createdAt])
+  @@index([status, nextAttemptAt, receivedAt])
+  @@index([eventName, createdAt])
+  @@index([providerMessageId])
+}
+
+model WhatsAppOutbox {
+  id                  String                 @id @default(uuid())
+  recipientIdentityId String
+  recipientIdentity   WhatsAppIdentity       @relation(fields: [recipientIdentityId], references: [id], onDelete: Cascade)
+  channel             String                 @default("WHATSAPP")
+  provider            String                 @default("legacy")
+  purpose             WhatsAppConsentPurpose
+  consentRequired     Boolean                @default(true)
+  messageKey          String
+  messageVersion      String                 @default("v1")
+  language            String
+  textBody            String?
+  textSnapshotHash    String?
+  dedupeKey           String                 @unique
+
+  domainEventId          String?
+  domainEventVersion     Int?
+  workflowEventId        String?
+  workflowEvent          RekomtekWorkflowEvent?  @relation(fields: [workflowEventId], references: [id], onDelete: SetNull)
+  rekomtekNotificationId String?
+  rekomtekNotification   RekomtekNotification?   @relation(fields: [rekomtekNotificationId], references: [id], onDelete: SetNull)
+  scheduleId             String?
+  schedule               RekomtekExposeSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  scheduleVersion        Int?
+
+  status            WhatsAppOutboxStatus @default(PENDING)
+  attemptCount      Int                  @default(0)
+  maxAttempts       Int                  @default(6)
+  nextAttemptAt     DateTime             @default(now())
+  leaseUntil        DateTime?
+  lockedBy          String?
+  sendStartedAt     DateTime?
+  providerMessageId String?              @unique
+  lastErrorCode     String?
+  lastErrorMessage  String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  deliveryEvents WhatsAppDeliveryEvent[]
+
+  @@index([status, nextAttemptAt])
+  @@index([provider, status, nextAttemptAt])
+  @@index([recipientIdentityId, status])
+  @@index([providerMessageId])
+  @@index([scheduleId, scheduleVersion])
+  @@index([workflowEventId])
+}
+
+model WhatsAppDeliveryEvent {
+  id                String                 @id @default(uuid())
+  outboxId          String?
+  outbox            WhatsAppOutbox?        @relation(fields: [outboxId], references: [id], onDelete: Cascade)
+  providerEventId   String                 @unique
+  providerMessageId String?
+  status            WhatsAppDeliveryStatus
+  providerAck       Int?
+  providerStatus    String?
+  providerTimestamp DateTime?
+  createdAt         DateTime               @default(now())
+
+  @@index([outboxId, createdAt])
+  @@index([providerMessageId, createdAt])
+}
+
+model WhatsAppAdminAuditEvent {
+  id          String   @id @default(uuid())
+  action      String
+  actorUserId String
+  outboxId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([outboxId, createdAt])
+}
+
+model WhatsAppDispatchLock {
+  name        String    @id
+  lockedUntil DateTime?
+  lockedBy    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model WhatsAppOutboxSkipEvent {
+  id                  String                 @id @default(uuid())
+  recipientUserId     String?
+  recipientIdentityId String?
+  recipientIdentity   WhatsAppIdentity?      @relation(fields: [recipientIdentityId], references: [id], onDelete: SetNull)
+  purpose             WhatsAppConsentPurpose
+  messageKey          String
+  messageVersion      String
+  domainEventId       String?
+  reason              String
+  dedupeKey           String                 @unique
+  createdAt           DateTime               @default(now())
+
+  @@index([reason, createdAt])
+  @@index([recipientUserId, createdAt])
+  @@index([recipientIdentityId, createdAt])
 }
 
 model NewsSlugRedirect {

@@ -40,20 +40,17 @@ export class PrismaKnowledgeService implements KnowledgeRetriever {
 
   /**
    * Ringkasan statistik nyata dari database (bukan angka karangan).
-   * Menampilkan total data di sistem; angka terpublikasi disebut bila berbeda.
+   * Menampilkan hanya jumlah data yang memenuhi kebijakan publik.
    * Selalu disertakan sebagai konteks agar model tidak mengarang jumlah.
    */
   async getSummaryChunk(): Promise<KnowledgeChunk | null> {
-    const [riverRegions, riverRegionsPublished, watersheds, rivers, stations] =
-      await Promise.all([
-        this.prisma.riverRegion.count(),
-        this.prisma.riverRegion.count({
-          where: { status: true, publishedAt: { not: null } },
-        }),
-        this.prisma.watershed.count(),
-        this.prisma.river.count(),
-        this.prisma.station.count(),
-      ]);
+    const publicWhere = { status: true, publishedAt: { not: null } };
+    const [riverRegions, watersheds, rivers, stations] = await Promise.all([
+      this.prisma.riverRegion.count({ where: publicWhere }),
+      this.prisma.watershed.count({ where: publicWhere }),
+      this.prisma.river.count({ where: publicWhere }),
+      this.prisma.station.count({ where: publicWhere }),
+    ]);
 
     const parts: string[] = [
       `Statistik data pada sistem SIPENGSUI saat ini:`,
@@ -62,9 +59,6 @@ export class PrismaKnowledgeService implements KnowledgeRetriever {
       `• Sungai: ${rivers}`,
       `• Stasiun: ${stations}`,
     ];
-    if (riverRegionsPublished !== riverRegions) {
-      parts.push(`• Wilayah Sungai terpublikasi: ${riverRegionsPublished}`);
-    }
 
     return {
       id: 'live-stats',
@@ -243,28 +237,6 @@ export class PrismaKnowledgeService implements KnowledgeRetriever {
         content: `Dokumen yang dibutuhkan untuk pengajuan ${jenis} ${jenisPermohonan}:\n${items.slice(0, 25).join('\n')}`,
         accessLevel: 'public',
         score: 4,
-      });
-    }
-
-    // Rekomtek terpublikasi.
-    const rekomteks = await this.prisma.rekomtek.findMany({
-      where: { status: 'PUBLISHED' },
-      select: {
-        id: true,
-        nomor: true,
-        judul: true,
-        deskripsi: true,
-        jenis: true,
-      },
-      take: 20,
-    });
-    for (const rekomtek of rekomteks) {
-      push({
-        id: `rekomtek:${rekomtek.id}`,
-        title: `Rekomtek: ${rekomtek.judul}`,
-        content: `Rekomendasi teknis ${rekomtek.jenis} nomor ${rekomtek.nomor} dengan judul "${rekomtek.judul}".${rekomtek.deskripsi ? ` ${rekomtek.deskripsi}` : ''}`,
-        accessLevel: 'public',
-        score: 2,
       });
     }
 

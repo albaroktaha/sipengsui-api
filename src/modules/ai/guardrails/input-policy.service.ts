@@ -66,7 +66,7 @@ export class InputPolicyService {
   /**
    * Mengevaluasi pertanyaan: deteksi injection, cek topik, cek kill switch.
    */
-  evaluate(input: { question: string; request: Request }): PolicyDecision {
+  evaluate(input: { question: string; request?: Request }): PolicyDecision {
     const { question } = input;
 
     if (!this.config.enabled) {

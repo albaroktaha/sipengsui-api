@@ -6,7 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { Prisma, RekomtekStatus } from '@prisma/client';
+import {
+  BerkasSourceType,
+  JenisPermohonan,
+  Prisma,
+  RekomtekStatus,
+  RekomtekWorkflowStage,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 
@@ -14,8 +20,13 @@ import { CreateRekomtekDto } from './dto/create-rekomtek.dto';
 import { UpdateRekomtekDto } from './dto/update-rekomtek.dto';
 import { QueryRekomtekDto } from './dto/query-rekomtek.dto';
 import { BerkasService } from './berkas.service';
-import { isAllowedGoogleDriveUrl } from './drive-url.util';
-import { isRekomtekStaff } from './rekomtek-access.util';
+import { isPetugasOnly, isRekomtekStaff } from './rekomtek-access.util';
+
+function parseJsonInput(value?: string): Prisma.InputJsonValue | undefined {
+  if (!value) return undefined;
+  const parsed: unknown = JSON.parse(value);
+  return parsed === null ? undefined : parsed;
+}
 
 @Injectable()
 export class RekomtekService {
@@ -29,12 +40,21 @@ export class RekomtekService {
     watershed: true,
     riverRegion: true,
     river: true,
+    parentRekomtek: {
+      select: { id: true, nomor: true, revisionNumber: true, status: true },
+    },
+    revisions: {
+      select: { id: true, nomor: true, revisionNumber: true, status: true },
+      orderBy: { revisionNumber: 'asc' as const },
+    },
   };
 
   private accessSelect = {
     id: true,
     createdById: true,
     status: true,
+    sourceRevision: true,
+    checklistRevision: true,
   } as const;
 
   /**
@@ -45,11 +65,20 @@ export class RekomtekService {
     return isRekomtekStaff(user);
   }
 
+  private assertCanSubmitApplication(user: AuthenticatedUser): void {
+    if (isPetugasOnly(user)) {
+      throw new ForbiddenException(
+        'Petugas hanya dapat mereview Berkas Persyaratan pada Permohonan yang ditugaskan',
+      );
+    }
+  }
+
   async canAccess(
     user: AuthenticatedUser,
     id: string,
     _opts: { forUpdate?: boolean } = {},
   ) {
+    void _opts;
     const rekomtek = await this.prisma.rekomtek.findUnique({
       where: { id },
       select: this.accessSelect,
@@ -62,6 +91,34 @@ export class RekomtekService {
     // Staff boleh akses semua; user biasa hanya miliknya sendiri.
     if (!this.isStaff(user) && rekomtek.createdById !== user.userId) {
       throw new ForbiddenException('Anda tidak memiliki akses ke rekomtek ini');
+    }
+
+    const isPetugas = isPetugasOnly(user);
+    const teamMemberDelegate = (
+      this.prisma as unknown as {
+        rekomtekTeamMember?: {
+          findMany: (
+            args: unknown,
+          ) => Promise<Array<{ id: string; userId: string }>>;
+        };
+      }
+    ).rekomtekTeamMember;
+    if (isPetugas && teamMemberDelegate) {
+      const members = await teamMemberDelegate.findMany({
+        where: {
+          activeUntil: null,
+          assignment: { rekomtekId: id, isActive: true },
+        },
+        select: { id: true, userId: true },
+      });
+      const assignment = members.find(
+        (member) => member.userId === user.userId,
+      );
+      if (!assignment) {
+        throw new ForbiddenException(
+          'Petugas hanya dapat mengakses Permohonan Rekomtek yang ditugaskan kepadanya',
+        );
+      }
     }
 
     return rekomtek;
@@ -80,19 +137,19 @@ export class RekomtekService {
 
     await this.validateReferences(dto);
 
-    const analysisData = dto.analysisData
-      ? JSON.parse(dto.analysisData)
-      : undefined;
-    const parameters = dto.parameters ? JSON.parse(dto.parameters) : undefined;
+    const analysisData = parseJsonInput(dto.analysisData);
+    const parameters = parseJsonInput(dto.parameters);
 
     const rekomtek = await this.prisma.rekomtek.create({
       data: {
         nomor: dto.nomor,
         judul: dto.judul,
         jenis: dto.jenis,
-        jenisPermohonan: dto.jenisPermohonan as any,
+        jenisPermohonan: dto.jenisPermohonan as JenisPermohonan,
         deskripsi: dto.deskripsi,
         status: RekomtekStatus.DRAFT,
+        workflowStage: RekomtekWorkflowStage.PEMOHON_DRAFT,
+        workflowMigrationRequired: false,
         stationId: dto.stationId,
         riverId: dto.riverId,
         customRiverName: dto.customRiverName,
@@ -107,12 +164,35 @@ export class RekomtekService {
       include: this.includeClause,
     });
 
-    // Auto-generate checklist berkas dari template
-    await this.berkasService.generateFromTemplate(
-      rekomtek.id,
-      dto.jenis,
-      dto.jenisPermohonan,
-    );
+    // Auto-generate checklist berkas dari template. Jangan tinggalkan
+    // parent kosong bila template tidak tersedia atau gagal dibuat.
+    try {
+      const checklistCount = await this.berkasService.generateFromTemplate(
+        rekomtek.id,
+        dto.jenis,
+        dto.jenisPermohonan,
+      );
+      if (!checklistCount) {
+        throw new BadRequestException(
+          `Checklist belum dapat dibuat untuk ${dto.jenis} / ${dto.jenisPermohonan}`,
+        );
+      }
+    } catch (error) {
+      await this.prisma.rekomtek.delete({ where: { id: rekomtek.id } });
+      throw error;
+    }
+
+    await this.prisma.rekomtekWorkflowEvent.create({
+      data: {
+        rekomtekId: rekomtek.id,
+        fromStage: null,
+        toStage: RekomtekWorkflowStage.PEMOHON_DRAFT,
+        action: 'BUAT_PERMOHONAN',
+        actorId: user.userId,
+        actorRole: user.role || user.roles?.[0] || 'USER',
+        actorPermissions: user.permissions,
+      },
+    });
 
     // Return rekomtek dengan berkas
     return this.prisma.rekomtek.findUnique({
@@ -128,13 +208,26 @@ export class RekomtekService {
     if (!this.isStaff(user)) {
       where.createdById = user.userId;
     }
+    if (
+      user.roles?.includes('PETUGAS') &&
+      !user.roles.some((role) =>
+        ['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'].includes(role),
+      )
+    ) {
+      where.teamAssignments = {
+        some: {
+          isActive: true,
+          members: { some: { userId: user.userId, activeUntil: null } },
+        },
+      };
+    }
 
     if (query.status) {
       where.status = query.status;
     }
 
     if (query.jenisPermohonan) {
-      where.jenisPermohonan = query.jenisPermohonan as any;
+      where.jenisPermohonan = query.jenisPermohonan;
     }
 
     if (query.stationId) {
@@ -192,6 +285,13 @@ export class RekomtekService {
           jenisPermohonan: true,
           deskripsi: true,
           status: true,
+          workflowStage: true,
+          initialCorrectionCount: true,
+          workflowVersion: true,
+          workflowMigrationRequired: true,
+          workflowMigrationNote: true,
+          approvedDraftArtifactId: true,
+          publishedArtifactId: true,
           stationId: true,
           riverId: true,
           customRiverName: true,
@@ -216,9 +316,10 @@ export class RekomtekService {
       this.prisma.rekomtek.count({ where }),
     ]);
 
-    const progressByRekomtek = await this.berkasService.getProgressForRekomtekIds(
-      items.map((item) => item.id),
-    );
+    const progressByRekomtek =
+      await this.berkasService.getProgressForRekomtekIds(
+        items.map((item) => item.id),
+      );
 
     return {
       data: items.map((item) => ({
@@ -245,14 +346,14 @@ export class RekomtekService {
   async update(id: string, dto: UpdateRekomtekDto, user: AuthenticatedUser) {
     const rekomtek = await this.canAccess(user, id, { forUpdate: true });
 
-    if (
-      !this.isStaff(user) &&
-      ![RekomtekStatus.DRAFT, RekomtekStatus.REJECTED].some(
-        (status) => status === rekomtek.status,
-      )
-    ) {
+    if (!this.isStaff(user) && rekomtek.status !== RekomtekStatus.DRAFT) {
       throw new ForbiddenException(
-        'Permohonan hanya dapat diubah saat DRAFT atau dikembalikan untuk revisi',
+        'Permohonan hanya dapat diubah saat DRAFT; gunakan Ajukan Ulang untuk revision baru',
+      );
+    }
+    if (rekomtek.status === RekomtekStatus.REJECTED) {
+      throw new ForbiddenException(
+        'Record REJECTED immutable; gunakan Ajukan Ulang untuk revision baru',
       );
     }
 
@@ -270,10 +371,8 @@ export class RekomtekService {
 
     await this.validateReferences(dto);
 
-    const analysisData = dto.analysisData
-      ? JSON.parse(dto.analysisData)
-      : undefined;
-    const parameters = dto.parameters ? JSON.parse(dto.parameters) : undefined;
+    const analysisData = parseJsonInput(dto.analysisData);
+    const parameters = parseJsonInput(dto.parameters);
 
     return this.prisma.rekomtek.update({
       where: { id },
@@ -282,7 +381,7 @@ export class RekomtekService {
         ...(dto.judul !== undefined && { judul: dto.judul }),
         ...(dto.jenis !== undefined && { jenis: dto.jenis }),
         ...(dto.jenisPermohonan !== undefined && {
-          jenisPermohonan: dto.jenisPermohonan as any,
+          jenisPermohonan: dto.jenisPermohonan as JenisPermohonan,
         }),
         ...(dto.deskripsi !== undefined && { deskripsi: dto.deskripsi }),
         ...(dto.stationId !== undefined && { stationId: dto.stationId }),
@@ -303,51 +402,231 @@ export class RekomtekService {
   }
 
   async remove(id: string, user: AuthenticatedUser) {
-    await this.canAccess(user, id, { forUpdate: true });
+    const rekomtek = await this.canAccess(user, id, { forUpdate: true });
+    if (!this.isStaff(user) && rekomtek.status !== RekomtekStatus.DRAFT) {
+      throw new ForbiddenException(
+        'Record REJECTED immutable; gunakan Ajukan Ulang untuk membuat revision baru',
+      );
+    }
+    if (rekomtek.status === RekomtekStatus.REJECTED) {
+      throw new ForbiddenException(
+        'Record REJECTED immutable; gunakan Ajukan Ulang untuk revision baru',
+      );
+    }
 
     return this.prisma.rekomtek.delete({ where: { id } });
   }
 
   async submit(id: string, user: AuthenticatedUser) {
     const rekomtek = await this.canAccess(user, id, { forUpdate: true });
+    this.assertCanSubmitApplication(user);
 
-    if (
-      ![RekomtekStatus.DRAFT, RekomtekStatus.REJECTED].some(
-        (status) => status === rekomtek.status,
-      )
-    ) {
+    if (rekomtek.status !== RekomtekStatus.DRAFT) {
       throw new BadRequestException(
-        'Hanya rekomtek DRAFT atau yang dikembalikan untuk revisi yang dapat diajukan ulang',
+        'Hanya rekomtek DRAFT yang dapat diajukan. Gunakan Ajukan Ulang untuk record REJECTED.',
       );
     }
 
-    const requiredBerkas = await this.prisma.rekomtekBerkas.findMany({
-      where: { rekomtekId: id, isRequired: true },
-      select: { id: true, kode: true, uraian: true, driveUrl: true },
-    });
-
-    const missingBerkas = requiredBerkas
-      .filter(
-        (berkas) => !isAllowedGoogleDriveUrl(berkas.driveUrl),
-      )
-      .map((berkas) => ({
-        id: berkas.id,
-        kode: berkas.kode,
-        uraian: berkas.uraian,
-      }));
-
-    if (missingBerkas.length > 0) {
+    const expectedSourceRevision = rekomtek.sourceRevision;
+    const validation = await this.berkasService.revalidateRequired(id);
+    if (validation.issues.length > 0) {
       throw new BadRequestException({
-        message: 'Semua berkas wajib harus memiliki link Google Drive yang valid',
-        missingBerkas,
+        message:
+          'Semua berkas wajib harus lolos validasi teknis sebelum Submit',
+        berkasIssues: validation.issues,
       });
     }
 
-    return this.prisma.rekomtek.update({
-      where: { id },
+    const claimed = await this.prisma.rekomtek.updateMany({
+      where: {
+        id,
+        status: RekomtekStatus.DRAFT,
+        sourceRevision: expectedSourceRevision,
+      },
       data: { status: RekomtekStatus.REVIEW },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException(
+        'Sumber atau status rekomtek berubah selama validasi; ulangi Submit',
+      );
+    }
+    return this.prisma.rekomtek.findUnique({
+      where: { id },
       include: this.includeClause,
     });
+  }
+
+  async reapply(id: string, user: AuthenticatedUser) {
+    await this.canAccess(user, id, { forUpdate: true });
+    this.assertCanSubmitApplication(user);
+    const original = await this.prisma.rekomtek.findUnique({
+      where: { id },
+      include: { berkas: true },
+    });
+
+    if (!original) {
+      throw new NotFoundException('Rekomtek tidak ditemukan');
+    }
+    if (original.status !== RekomtekStatus.REJECTED) {
+      throw new BadRequestException(
+        'Ajukan Ulang hanya tersedia untuk rekomtek yang berstatus REJECTED',
+      );
+    }
+
+    const revisionNumber = original.revisionNumber + 1;
+    const nomor = `${original.nomor}-R${revisionNumber}`;
+    const duplicate = await this.prisma.rekomtek.findUnique({
+      where: { nomor },
+    });
+    if (duplicate) {
+      throw new ConflictException(`Nomor revisi '${nomor}' sudah digunakan`);
+    }
+
+    const clonedStorageKeys = new Map<string, string>();
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const revision = await tx.rekomtek.create({
+          data: {
+            nomor,
+            judul: original.judul,
+            jenis: original.jenis,
+            deskripsi: original.deskripsi,
+            status: RekomtekStatus.DRAFT,
+            jenisPermohonan: original.jenisPermohonan,
+            stationId: original.stationId,
+            riverId: original.riverId,
+            customRiverName: original.customRiverName,
+            watershedId: original.watershedId,
+            riverRegionId: original.riverRegionId,
+            ...(original.analysisData !== null && {
+              analysisData: original.analysisData,
+            }),
+            ...(original.parameters !== null && {
+              parameters: original.parameters,
+            }),
+            fileUrl: null,
+            createdBy: original.createdBy,
+            createdById: original.createdById ?? user.userId,
+            revisionNumber,
+            parentRekomtekId: original.id,
+            workflowStage: RekomtekWorkflowStage.PEMOHON_DRAFT,
+            initialCorrectionCount: 0,
+            workflowVersion: 0,
+            workflowMigrationRequired: false,
+          },
+        });
+
+        for (const source of original.berkas) {
+          const clonedStorageKey =
+            source.sourceType === 'UPLOAD'
+              ? (clonedStorageKeys.get(source.id) ?? null)
+              : null;
+          const carriedSourceType =
+            source.sourceType === BerkasSourceType.GOOGLE_DRIVE
+              ? BerkasSourceType.GOOGLE_DRIVE
+              : null;
+          const carriedDriveUrl =
+            carriedSourceType === 'GOOGLE_DRIVE' ? source.driveUrl : null;
+          const carriedDriveFileId =
+            carriedSourceType === 'GOOGLE_DRIVE' ? source.driveFileId : null;
+          const carriedDriveResourceKey =
+            carriedSourceType === 'GOOGLE_DRIVE'
+              ? source.driveResourceKey
+              : null;
+          const hasSource = Boolean(
+            carriedSourceType && (clonedStorageKey || carriedDriveUrl),
+          );
+          const technicalStatus = hasSource ? 'PENDING_CHECK' : 'INVALID';
+          const technicalCode = hasSource
+            ? 'CARRIED_FORWARD_RECHECK'
+            : 'SOURCE_REQUIRED';
+          const technicalMessage = hasSource
+            ? 'Sumber dibawa dari versi sebelumnya dan harus divalidasi ulang.'
+            : 'Berkas wajib memiliki link Google Drive.';
+
+          const copied = await tx.rekomtekBerkas.create({
+            data: {
+              rekomtekId: revision.id,
+              templateId: source.templateId,
+              kode: source.kode,
+              nomorUrut: source.nomorUrut,
+              uraian: source.uraian,
+              isRequired: source.isRequired,
+              isComplete: false,
+              reviewStatus: 'PENDING',
+              technicalStatus,
+              technicalCode,
+              technicalMessage,
+              checkedAt: null,
+              sourceVersion: source.sourceVersion + 1,
+              sourceType: carriedSourceType,
+              driveUrl: carriedDriveUrl,
+              driveFileId: carriedDriveFileId,
+              driveResourceKey: carriedDriveResourceKey,
+              storageKey: clonedStorageKey,
+              notes: source.notes,
+              revisionNote: source.revisionNote,
+              returnedAt: null,
+              allowedSourceTypes:
+                source.allowedSourceTypes as Prisma.InputJsonValue,
+              sensitivity: source.sensitivity,
+              accessPolicy: source.accessPolicy,
+              ...(source.allowedMimeTypes !== null && {
+                allowedMimeTypes: source.allowedMimeTypes,
+              }),
+              maxFileSize: source.maxFileSize,
+              ...(source.allowedExportFormats !== null && {
+                allowedExportFormats: source.allowedExportFormats,
+              }),
+            },
+          });
+
+          await tx.rekomtekBerkasLinkHistory.create({
+            data: {
+              rekomtekBerkasId: copied.id,
+              oldDriveUrl: null,
+              newDriveUrl: carriedDriveUrl,
+              oldSourceType: null,
+              newSourceType: carriedSourceType,
+              oldStorageKey: null,
+              newStorageKey: clonedStorageKey,
+              changeReason: 'CARRIED_FORWARD',
+              technicalStatus,
+              technicalCode,
+              changedById: user.userId,
+              role: user.role || user.roles?.[0] || 'USER',
+            },
+          });
+        }
+
+        await tx.rekomtekWorkflowEvent.create({
+          data: {
+            rekomtekId: revision.id,
+            fromStage: null,
+            toStage: RekomtekWorkflowStage.PEMOHON_DRAFT,
+            action: 'BUAT_REVISION_AJUKAN_ULANG',
+            actorId: user.userId,
+            actorRole: user.role || user.roles?.[0] || 'USER',
+            actorPermissions: user.permissions,
+            metadata: { parentRekomtekId: original.id, revisionNumber },
+          },
+        });
+
+        return tx.rekomtek.findUnique({
+          where: { id: revision.id },
+          include: this.includeClause,
+        });
+      });
+    } catch (error) {
+      await Promise.all(
+        [...clonedStorageKeys.values()].map((storageKey) =>
+          this.berkasService
+            .removeUploadForRevision(storageKey)
+            .catch(() => undefined),
+        ),
+      );
+      throw error;
+    }
   }
 
   async approve(id: string, reviewedBy: string, user: AuthenticatedUser) {
@@ -359,13 +638,29 @@ export class RekomtekService {
       );
     }
 
-    return this.prisma.rekomtek.update({
-      where: { id },
+    const expectedChecklistRevision =
+      await this.berkasService.assertReadyForApproval(id);
+
+    const claimed = await this.prisma.rekomtek.updateMany({
+      where: {
+        id,
+        status: RekomtekStatus.REVIEW,
+        checklistRevision: expectedChecklistRevision,
+      },
       data: {
         status: RekomtekStatus.APPROVED,
-        reviewedBy,
+        reviewedBy: user.userId,
         reviewedAt: new Date(),
+        checklistRevision: { increment: 1 },
       },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException(
+        'Checklist atau status berubah selama approval; ulangi proses',
+      );
+    }
+    return this.prisma.rekomtek.findUnique({
+      where: { id },
       include: this.includeClause,
     });
   }
@@ -379,13 +674,20 @@ export class RekomtekService {
       );
     }
 
-    return this.prisma.rekomtek.update({
-      where: { id },
+    const claimed = await this.prisma.rekomtek.updateMany({
+      where: { id, status: RekomtekStatus.REVIEW },
       data: {
         status: RekomtekStatus.REJECTED,
-        reviewedBy,
+        reviewedBy: user.userId,
         reviewedAt: new Date(),
+        checklistRevision: { increment: 1 },
       },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Status rekomtek berubah; ulangi penolakan');
+    }
+    return this.prisma.rekomtek.findUnique({
+      where: { id },
       include: this.includeClause,
     });
   }
@@ -399,14 +701,21 @@ export class RekomtekService {
       );
     }
 
-    return this.prisma.rekomtek.update({
-      where: { id },
+    const claimed = await this.prisma.rekomtek.updateMany({
+      where: { id, status: RekomtekStatus.APPROVED },
       data: {
         status: RekomtekStatus.PUBLISHED,
-        approvedBy,
+        approvedBy: user.userId,
         approvedAt: new Date(),
         publishedAt: new Date(),
+        checklistRevision: { increment: 1 },
       },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('Status rekomtek berubah; ulangi publikasi');
+    }
+    return this.prisma.rekomtek.findUnique({
+      where: { id },
       include: this.includeClause,
     });
   }

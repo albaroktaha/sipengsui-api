@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { Request } from 'express';
 
 interface CompletionEvent {
+  channel?: string;
   userId?: string;
   sourceIds: string[];
   usage?: { totalTokens?: number; inputTokens?: number; outputTokens?: number };
@@ -21,17 +21,19 @@ export class AiAuditService {
   private readonly logger = new Logger('AiAudit');
 
   recordCompletion(event: CompletionEvent): void {
-    const { userId, sourceIds, usage, latencyMs } = event;
+    const { channel, userId, sourceIds, usage, latencyMs } = event;
     this.logger.log(
-      `[AI] Completion userId=${userId ?? 'guest'} sources=${sourceIds.length} ` +
+      `[AI] Completion channel=${channel ?? 'WEB'} userId=${userId ?? 'guest'} sources=${sourceIds.length} ` +
         `tokens=${usage?.totalTokens ?? 'n/a'} latencyMs=${latencyMs ?? 'n/a'}`,
     );
   }
 
   recordProviderError(event: ProviderErrorEvent): void {
-    const message =
-      event.error instanceof Error ? event.error.message : String(event.error);
-    this.logger.error(`[AI] Provider error: ${message}`);
+    const category =
+      event.error instanceof Error
+        ? event.error.name
+        : 'UNKNOWN_PROVIDER_ERROR';
+    this.logger.error(`[AI] Provider error category=${category}`);
   }
 
   recordPolicyBlock(reason: string): void {

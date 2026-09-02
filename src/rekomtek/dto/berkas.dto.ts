@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsEnum,
   IsIn,
   IsInt,
   IsOptional,
@@ -10,10 +11,19 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { BerkasSourceType } from '@prisma/client';
 
 export class UpdateBerkasDto {
   @ApiPropertyOptional({
-    description: 'Link Google Drive atau Google Docs untuk persyaratan',
+    description: 'Sumber aktif persyaratan',
+    enum: BerkasSourceType,
+  })
+  @IsOptional()
+  @IsEnum(BerkasSourceType)
+  sourceType?: BerkasSourceType;
+
+  @ApiPropertyOptional({
+    description: 'Link satu file Google Drive atau Google Workspace',
     example: 'https://drive.google.com/file/d/abc123/view',
     nullable: true,
   })
@@ -105,7 +115,10 @@ export class BerkasQueryDto {
   @Min(1)
   page = 1;
 
-  @ApiPropertyOptional({ description: 'Jumlah checklist per halaman', default: 20 })
+  @ApiPropertyOptional({
+    description: 'Jumlah checklist per halaman',
+    default: 20,
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)

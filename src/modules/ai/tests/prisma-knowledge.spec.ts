@@ -122,7 +122,7 @@ describe('PrismaKnowledgeService', () => {
   });
 
   it('getSummaryChunk menghitung jumlah data dari database', async () => {
-    prisma.riverRegion.count.mockResolvedValueOnce(5).mockResolvedValueOnce(4);
+    prisma.riverRegion.count.mockResolvedValue(5);
     prisma.watershed.count.mockResolvedValue(5);
     prisma.river.count.mockResolvedValue(123);
     prisma.station.count.mockResolvedValue(0);
@@ -131,6 +131,6 @@ describe('PrismaKnowledgeService', () => {
     expect(chunk).not.toBeNull();
     expect(chunk!.content).toContain('Wilayah Sungai: 5');
     expect(chunk!.content).toContain('Sungai: 123');
-    expect(chunk!.content).toContain('Wilayah Sungai terpublikasi: 4');
+    expect(chunk!.content).not.toContain('Wilayah Sungai terpublikasi: 4');
   });
 });

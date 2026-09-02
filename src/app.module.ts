@@ -27,6 +27,7 @@ import { RolesModule } from './roles/roles.module';
 import { DisasterReportsModule } from './disaster-reports/disaster-reports.module';
 import { AiModule } from './modules/ai/ai.module';
 import { NewsModule } from './news/news.module';
+import { WhatsAppModule } from './whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { NewsModule } from './news/news.module';
     DisasterReportsModule,
     AiModule,
     NewsModule,
+    WhatsAppModule,
   ],
   controllers: [AppController],
   providers: [

@@ -124,6 +124,7 @@ export class OAuthService {
       email: user.email,
       role: primaryRole,
       roles: roleNames,
+      permissions: permissionSlugs,
     });
 
     return {
@@ -217,6 +218,10 @@ export class OAuthService {
           termsAcceptedAt: new Date(),
         },
         include: { role: true },
+      });
+
+      await tx.userRole.create({
+        data: { userId: createdUser.id, roleId: userRole.id },
       });
 
       await tx.account.create({

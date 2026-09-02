@@ -22,6 +22,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Permissions } from '../auth/decorators/permissions.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { AssignPermissionDto } from './dto/assign-permission.dto';
 import { SyncPermissionsDto } from './dto/sync-permissions.dto';
@@ -71,8 +73,12 @@ export class UsersController {
   @Roles('SUPER_ADMIN')
   @Permissions('users.update')
   @ApiOperation({ summary: 'Update user (nama, email, status, dll)' })
-  update(@Param('id') id: string, @Body() body: Record<string, unknown>) {
-    return this.usersService.update(id, body);
+  update(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.usersService.update(id, body, actor.userId);
   }
 
   @Delete(':id')
@@ -81,8 +87,8 @@ export class UsersController {
   @Roles('SUPER_ADMIN')
   @Permissions('users.delete')
   @ApiOperation({ summary: 'Non-aktifkan user' })
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() actor: AuthenticatedUser) {
+    return this.usersService.remove(id, actor.userId);
   }
 
   // ─── Role Assignment ──────────────────────────────────────

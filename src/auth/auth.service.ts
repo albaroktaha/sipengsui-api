@@ -151,6 +151,10 @@ export class AuthService {
       termsAcceptedAt: new Date(),
     });
 
+    await this.prisma.userRole.create({
+      data: { userId: user.id, roleId: userRole.id },
+    });
+
     // Auto-assign default USER permissions
     const permissionSlugs = DEFAULT_USER_PERMISSIONS;
     const permissions = await this.prisma.permission.findMany({
@@ -248,6 +252,7 @@ export class AuthService {
       email: user.email,
       role: primaryRole,
       roles: roleNames,
+      permissions: permissionSlugs,
     };
 
     const accessToken = await this.jwtService.signAsync(payload);
@@ -565,6 +570,7 @@ export class AuthService {
       email: user.email,
       role: primaryRole,
       roles: user.roles,
+      permissions: user.permissions,
     });
   }
 

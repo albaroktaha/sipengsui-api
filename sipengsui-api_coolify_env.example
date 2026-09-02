@@ -1,0 +1,191 @@
+# SIPENGSUI API — Coolify environment template
+#
+# File ini HANYA untuk resource/aplikasi `sipengsui-api` di Coolify.
+# Jangan menyalin file ini ke resource `waha`.
+#
+# Isi nilai rahasia melalui Coolify Secret/Environment Secret.
+# Jangan mengisi secret di Git, chat, screenshot, atau log.
+# Setelah mengubah environment, redeploy resource sipengsui-api.
+
+# ============================================================================
+# RUNTIME & DATABASE
+# ============================================================================
+NODE_ENV=production
+PORT=3000
+
+# Ambil connection string dari resource PostgreSQL/secret manager Coolify.
+# Jangan memakai host `localhost` dari dalam container API.
+DATABASE_URL=
+
+# ============================================================================
+# AUTHENTICATION & OAUTH
+# ============================================================================
+JWT_SECRET=
+JWT_EXPIRES_IN=7d
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_CALLBACK_URL=https://api.sipengsui.id/auth/google/callback
+
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_CALLBACK_URL=https://api.sipengsui.id/auth/github/callback
+
+# Isi dengan origin frontend production yang sebenarnya.
+# Contoh format: https://nama-domain-frontend-anda
+CORS_ORIGIN=
+TRUST_PROXY=1
+
+# ============================================================================
+# REKOMTEK FILES & STORAGE
+# ============================================================================
+REKOMTEK_BERKAS_STORAGE_DIR=/app/storage/rekomtek-berkas
+REKOMTEK_DRIVE_TIMEOUT_MS=10000
+REKOMTEK_DEFAULT_MAX_FILE_SIZE_BYTES=10485760
+# Kosong berarti pemeriksaan antivirus berstatus Pending Check.
+REKOMTEK_ANTIVIRUS_COMMAND=
+REKOMTEK_ANTIVIRUS_TIMEOUT_MS=30000
+
+# Local storage membutuhkan persistent volume /app/uploads.
+# Untuk object storage, ubah driver menjadi s3 atau r2 dan isi S3_*.
+NEWS_STORAGE_DRIVER=local
+NEWS_STORAGE_PUBLIC_URL=https://api.sipengsui.id
+S3_ENDPOINT=
+S3_REGION=auto
+S3_BUCKET=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_PUBLIC_BASE_URL=
+
+# ============================================================================
+# MAIL & EMAIL VERIFICATION
+# ============================================================================
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_SECURE=false
+MAIL_REQUIRE_TLS=true
+MAIL_CONNECTION_TIMEOUT_MS=10000
+MAIL_GREETING_TIMEOUT_MS=10000
+MAIL_SOCKET_TIMEOUT_MS=10000
+MAIL_USER=sipengsui@gmail.com
+MAIL_PASS=
+MAIL_FROM=Sipengsui <sipengsui@gmail.com>
+
+# Isi dengan origin frontend production yang menerima link verifikasi.
+APP_URL=
+VERIFY_TOKEN_TTL_MINUTES=60
+VERIFY_RESEND_COOLDOWN_MINUTES=5
+
+# ============================================================================
+# CLOUDFLARE TURNSTILE / LEGACY RECAPTCHA COMPATIBILITY
+# ============================================================================
+TURNSTILE_SECRET_KEY=
+# Variabel legacy; isi hanya jika flow lama reCAPTCHA masih digunakan.
+RECAPTCHA_SECRET_KEY=
+RECAPTCHA_SITE_KEY=
+
+SESSION_IDLE_TIMEOUT_MINUTES=120
+
+# ============================================================================
+# GEMINI AI
+# ============================================================================
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.5-flash
+AI_CHAT_ENABLED=true
+AI_MAX_INPUT_CHARS=4000
+AI_MAX_HISTORY_MESSAGES=12
+AI_MAX_OUTPUT_TOKENS=900
+AI_RATE_LIMIT=10
+AI_RATE_TTL_MS=60000
+
+# ============================================================================
+# WHATSAPP WAHA/SUMOPOD — API SIPENGSUI ONLY
+# ============================================================================
+# Tetap false selama session belum WORKING, webhook belum diuji, atau risk
+# acceptance belum selesai.
+WHATSAPP_ENABLED=false
+WHATSAPP_PROVIDER=waha
+
+# URL publik WAHA, tanpa anotasi URL, backtick, /dashboard, atau /api.
+WAHA_BASE_URL=https://waha.sipengsui.id
+# Isi dengan WAHA_API_KEY yang sama persis pada resource waha.
+WAHA_API_KEY=
+WAHA_SESSION=default
+
+# Isi dengan HMAC key webhook session WAHA yang sama.
+# Jangan samakan dengan WAHA_API_KEY.
+WAHA_WEBHOOK_HMAC_KEY=
+# Fallback non-production; biarkan kosong jika menggunakan HMAC.
+WAHA_WEBHOOK_CUSTOM_SECRET=
+
+# Form session WAHA menggunakan engine WEBJS pada deployment ini.
+# Nilai ini memvalidasi engine yang benar-benar berjalan di WAHA.
+WAHA_EXPECTED_ENGINE=WEBJS
+
+# Webhook verification, provider health, pacing, and dispatch
+WAHA_WEBHOOK_MAX_CLOCK_SKEW_SECONDS=300
+WAHA_SESSION_HEALTH_CACHE_MS=10000
+WAHA_SEND_MIN_INTERVAL_MS=1500
+WHATSAPP_DEFAULT_COUNTRY_CODE=62
+WHATSAPP_DEFAULT_LANGUAGE=id
+WHATSAPP_WEBHOOK_MAX_BODY_BYTES=262144
+WHATSAPP_OUTBOX_BATCH_SIZE=25
+WHATSAPP_DISPATCH_LOCK_TTL_MS=120000
+WHATSAPP_MAX_ATTEMPTS=6
+WHATSAPP_INBOX_MAX_ATTEMPTS=6
+WHATSAPP_INBOX_RETRY_BASE_MS=15000
+WHATSAPP_CONNECT_TIMEOUT_MS=5000
+WHATSAPP_RESPONSE_TIMEOUT_MS=10000
+WHATSAPP_RETENTION_DAYS=90
+
+# Pairing, consent, conversation, AI, and status limits
+WHATSAPP_PAIRING_TTL_MINUTES=10
+WHATSAPP_PAIRING_MAX_ATTEMPTS=5
+WHATSAPP_PAIRING_RATE_LIMIT=10
+WHATSAPP_PAIRING_RATE_WINDOW_MINUTES=15
+WHATSAPP_CONVERSATION_STATE_TTL_MINUTES=30
+WHATSAPP_SERVICE_WINDOW_HOURS=24
+WHATSAPP_AI_RATE_LIMIT=10
+WHATSAPP_AI_RATE_WINDOW_MINUTES=1
+WHATSAPP_STATUS_RATE_LIMIT=10
+WHATSAPP_STATUS_RATE_WINDOW_MINUTES=1
+
+# Message registry versions and optional reminders
+WHATSAPP_CONSENT_TEXT_VERSION=v1
+WHATSAPP_MESSAGE_STAGE_CHANGED_VERSION=v1
+WHATSAPP_MESSAGE_CORRECTION_REQUIRED_VERSION=v1
+WHATSAPP_MESSAGE_EXPOSE_SCHEDULED_VERSION=v1
+WHATSAPP_MESSAGE_EXPOSE_RESCHEDULED_VERSION=v1
+WHATSAPP_MESSAGE_EXPOSE_CANCELLED_VERSION=v1
+WHATSAPP_MESSAGE_EXPOSE_REMINDER_VERSION=v1
+WHATSAPP_EXPOSE_REMINDERS_ENABLED=false
+WHATSAPP_EXPOSE_REMINDER_OFFSETS_MINUTES=1440,60
+WHATSAPP_MESSAGE_REJECTED_VERSION=v1
+WHATSAPP_MESSAGE_PUBLISHED_VERSION=v1
+WHATSAPP_MESSAGE_CONVERSATION_REPLY_VERSION=v1
+
+# ============================================================================
+# MODEL ARMOR (OPTIONAL)
+# ============================================================================
+MODEL_ARMOR_ENABLED=false
+MODEL_ARMOR_PROJECT_ID=
+MODEL_ARMOR_LOCATION=
+MODEL_ARMOR_TEMPLATE_ID=
+
+# ============================================================================
+# INITIAL SEED
+# ============================================================================
+# true hanya sekali saat database production baru pertama kali di-deploy.
+# Kembalikan ke false setelah seed selesai.
+RUN_SEED=false
+
+# ============================================================================
+# COOLIFY STORAGE CHECKLIST
+# ============================================================================
+# Tambahkan persistent storage pada resource sipengsui-api:
+#   /app/uploads
+#   /app/storage
+#
+# Resource WAHA memiliki volume terpisah:
+#   /app/.sessions
+#   /app/.media

@@ -1,0 +1,19 @@
+{
+  "name": "default",
+  "config": {
+    "webhooks": [
+      {
+        "url": "https://api.sipengsui.id/whatsapp/webhook",
+        "events": ["message", "message.ack", "session.status"],
+        "hmac": {
+          "key": ""
+        },
+        "retries": {
+          "policy": "exponential",
+          "delaySeconds": 2,
+          "attempts": 15
+        }
+      }
+    ]
+  }
+}

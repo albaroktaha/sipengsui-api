@@ -18,6 +18,20 @@ interface VerificationEmailOptions {
   purpose?: VerificationPurpose;
 }
 
+export interface RejectionLetterEmailData {
+  email: string;
+  applicantName: string;
+  applicationNumber: string;
+  applicationTitle: string;
+  applicationUrl: string;
+}
+
+export interface MailMessage {
+  to: string;
+  subject: string;
+  html: string;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(
     /[&<>"']/g,
@@ -30,6 +44,46 @@ function escapeHtml(value: string): string {
         "'": '&#39;',
       })[character] ?? character,
   );
+}
+
+export function buildRejectionLetterEmail(
+  data: RejectionLetterEmailData,
+): MailMessage {
+  const safeName = escapeHtml(data.applicantName);
+  const safeNumber = escapeHtml(data.applicationNumber);
+  const safeTitle = escapeHtml(data.applicationTitle);
+  const safeApplicationUrl = escapeHtml(data.applicationUrl);
+
+  return {
+    to: data.email,
+    subject: `Surat Penolakan Permohonan Rekomtek ${data.applicationNumber} - SIPENGSUI`,
+    html: `
+      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;">
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 18px; font-weight: bold; color: #166534;">SIPENGSUI</div>
+          <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">Sistem Informasi Pengelolaan Sumber Daya Air</div>
+        </div>
+        <h2 style="color: #111827; margin: 0 0 16px;">Surat Penolakan Permohonan Rekomtek</h2>
+        <p style="color: #374151; font-size: 14px; line-height: 1.6;">Yth. <strong>${safeName}</strong>,</p>
+        <p style="color: #374151; font-size: 14px; line-height: 1.6;">
+          Permohonan Rekomtek nomor <strong>${safeNumber}</strong> dengan judul <strong>${safeTitle}</strong> telah ditolak setelah proses evaluasi ulang.
+        </p>
+        <p style="color: #374151; font-size: 14px; line-height: 1.6;">
+          Surat Penolakan final dapat dilihat dan diunduh melalui halaman detail permohonan Anda.
+        </p>
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${safeApplicationUrl}" style="display: inline-block; background: #166534; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: bold;">Buka Detail Permohonan</a>
+        </div>
+        <p style="color: #6b7280; font-size: 12px; line-height: 1.6;">
+          Jika tombol di atas tidak berfungsi, salin dan tempel tautan berikut ke browser Anda:<br/>
+          <span style="color: #166534; word-break: break-all;">${safeApplicationUrl}</span>
+        </p>
+        <p style="color: #6b7280; font-size: 12px; line-height: 1.6; margin-top: 20px;">
+          Email ini dikirim otomatis oleh SIPENGSUI. Silakan masuk ke akun Anda untuk mengunduh dokumen.
+        </p>
+      </div>
+    `,
+  };
 }
 
 @Injectable()
@@ -140,5 +194,11 @@ export class MailService {
       },
       { strict: options.strict },
     );
+  }
+
+  async sendRejectionLetterEmail(
+    data: RejectionLetterEmailData,
+  ): Promise<void> {
+    await this.sendMail(buildRejectionLetterEmail(data));
   }
 }

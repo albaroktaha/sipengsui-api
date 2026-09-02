@@ -345,3 +345,83 @@ describe('AuthService self-service profile', () => {
     expect(prisma.user.update).toHaveBeenCalled();
   });
 });
+
+describe('AuthService registration role assignment', () => {
+  const usersService = {
+    findByEmail: jest.fn(),
+    findRoleByName: jest.fn(),
+    create: jest.fn(),
+  };
+  const prisma = {
+    permission: {
+      findMany: jest.fn(),
+    },
+    userPermission: {
+      createMany: jest.fn(),
+    },
+    userRole: {
+      create: jest.fn(),
+    },
+  };
+  const jwtService = { signAsync: jest.fn() };
+  const emailVerificationService = {
+    generateToken: jest.fn(),
+    persistToken: jest.fn(),
+  };
+  const mailService = { sendVerificationEmail: jest.fn() };
+  const turnstileService = { verify: jest.fn() };
+
+  let service: AuthService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new AuthService(
+      usersService as never,
+      prisma as never,
+      jwtService as never,
+      emailVerificationService as never,
+      mailService as never,
+      turnstileService as never,
+    );
+  });
+
+  it('creates a USER role membership for a password registration', async () => {
+    const userRole = { id: 'user-role-id', name: 'USER' };
+    const createdUser = {
+      id: 'new-user-id',
+      firstName: 'New',
+      lastName: 'User',
+      email: 'new@example.com',
+      password: 'hashed-password',
+    };
+
+    usersService.findByEmail.mockResolvedValue(null);
+    usersService.findRoleByName.mockResolvedValue(userRole);
+    usersService.create.mockResolvedValue(createdUser);
+    prisma.permission.findMany.mockResolvedValue([]);
+    prisma.userRole.create.mockResolvedValue({
+      id: 'membership-id',
+      userId: createdUser.id,
+      roleId: userRole.id,
+    });
+    emailVerificationService.generateToken.mockReturnValue({
+      token: 'verification-token',
+      expiresAt: new Date('2026-08-27T00:00:00.000Z'),
+    });
+    emailVerificationService.persistToken.mockResolvedValue(undefined);
+    mailService.sendVerificationEmail.mockResolvedValue(undefined);
+    (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
+
+    await service.register({
+      firstName: 'New',
+      lastName: 'User',
+      email: 'new@example.com',
+      password: 'Password!1',
+      termsAccepted: true,
+    });
+
+    expect(prisma.userRole.create).toHaveBeenCalledWith({
+      data: { userId: createdUser.id, roleId: userRole.id },
+    });
+  });
+});

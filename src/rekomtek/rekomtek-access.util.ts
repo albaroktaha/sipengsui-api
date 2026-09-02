@@ -8,8 +8,19 @@ export const REKOMTEK_STAFF_ROLES = [
 ] as const;
 
 export function isRekomtekStaff(user: AuthenticatedUser): boolean {
-  return user.roles?.some((role) =>
-    REKOMTEK_STAFF_ROLES.includes(role as (typeof REKOMTEK_STAFF_ROLES)[number]),
+  const roles = new Set([...(user.roles ?? []), user.role]);
+  return [...roles].some((role) =>
+    REKOMTEK_STAFF_ROLES.includes(
+      role as (typeof REKOMTEK_STAFF_ROLES)[number],
+    ),
+  );
+}
+
+export function isPetugasOnly(user: AuthenticatedUser): boolean {
+  const roles = new Set([...(user.roles ?? []), user.role]);
+  return (
+    roles.has('PETUGAS') &&
+    !['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'].some((role) => roles.has(role))
   );
 }
 

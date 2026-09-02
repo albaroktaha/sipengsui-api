@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { convertToModelMessages, streamText, type UIMessageChunk } from 'ai';
+import {
+  convertToModelMessages,
+  generateText,
+  streamText,
+  type UIMessageChunk,
+} from 'ai';
 import type { GoogleGenerativeAIProviderOptions } from '@ai-sdk/google';
 import type { Request } from 'express';
 import { AiConfig } from './ai.config';
@@ -90,26 +95,19 @@ export class AiService {
     // 3. Retrieval knowledge (filter akses: guest → public only).
     const userId = decision.userId;
     const roles = decision.roles;
-    const [staticSources, prismaSources, summaryChunk] = await Promise.all([
-      this.staticKnowledge.search(decision.normalizedQuestion, {
-        limit: 3,
+    let sources: KnowledgeChunk[];
+    try {
+      sources = await this.retrieveSources(
+        decision.normalizedQuestion,
         userId,
         roles,
-      }),
-      this.prismaKnowledge.search(decision.normalizedQuestion, {
-        limit: 4,
-        userId,
-        roles,
-      }),
-      this.prismaKnowledge.getSummaryChunk(),
-    ]);
-
-    const summary = summaryChunk ? [summaryChunk] : [];
-    const sources = dedupeSources([
-      ...summary,
-      ...staticSources,
-      ...prismaSources,
-    ]).slice(0, 5);
+      );
+    } catch (error) {
+      this.audit.recordProviderError({ error });
+      return this.outputPolicy.createStaticStream(
+        'Maaf, basis pengetahuan SIPENGSUI sedang tidak tersedia. Silakan coba lagi nanti.',
+      );
+    }
     const context = formatSources(sources);
 
     // 4. Kirim pesan terakhir (maks 12) ke model.
@@ -134,6 +132,7 @@ export class AiService {
             }
           | undefined;
         this.audit.recordCompletion({
+          channel: 'WEB',
           userId,
           sourceIds: sources.map((source) => source.id),
           usage,
@@ -146,6 +145,99 @@ export class AiService {
     });
 
     return result.toUIMessageStream();
+  }
+
+  async createTextAnswer(input: {
+    question: string;
+    userId?: string;
+    roles?: string[];
+    channel?: string;
+  }): Promise<string> {
+    const startedAt = Date.now();
+    const question = input.question.trim();
+    if (!this.config.enabled) {
+      return 'Fitur Asisten SIPENGSUI sedang dinonaktifkan. Silakan coba lagi nanti.';
+    }
+    if (!this.config.apiKey) {
+      this.logger.warn('[AI] GEMINI_API_KEY tidak dikonfigurasi.');
+      return 'Maaf, layanan Asisten SIPENGSUI sedang tidak dapat digunakan. Silakan coba kembali beberapa saat lagi.';
+    }
+    if (question.length > this.config.maxInputChars) {
+      return `Pesan terlalu panjang. Maksimal ${this.config.maxInputChars} karakter.`;
+    }
+
+    const decision = this.inputPolicy.evaluate({
+      question,
+      request: undefined,
+    });
+    if (!decision.allowed) {
+      this.audit.recordPolicyBlock(decision.riskLevel);
+      return (
+        decision.safeMessage ??
+        'Permintaan tersebut tidak dapat diproses. Asisten SIPENGSUI hanya dapat membantu informasi dan layanan resmi SIPENGSUI.'
+      );
+    }
+
+    let sources: KnowledgeChunk[];
+    try {
+      sources = await this.retrieveSources(
+        decision.normalizedQuestion,
+        input.userId,
+        input.roles,
+      );
+    } catch (error) {
+      this.audit.recordProviderError({ error });
+      return 'Maaf, basis pengetahuan SIPENGSUI sedang tidak tersedia. Silakan coba lagi nanti.';
+    }
+    try {
+      const result = await generateText({
+        model: this.gemini.model(),
+        system: buildSipengsuiSystemPrompt(formatSources(sources)),
+        messages: [{ role: 'user', content: decision.normalizedQuestion }],
+        temperature: 0.2,
+        maxOutputTokens: this.config.maxOutputTokens,
+        providerOptions: {
+          google: GOOGLE_SAFETY_SETTINGS,
+        },
+      });
+      const text = result.text.trim();
+      if (
+        !this.outputPolicy.checkFinish(
+          String(result.finishReason ?? 'stop'),
+          text,
+        )
+      ) {
+        return this.outputPolicy.outputBlockMessage();
+      }
+      this.audit.recordCompletion({
+        channel: input.channel ?? 'WEB',
+        userId: input.userId,
+        sourceIds: sources.map((source) => source.id),
+        usage: result.usage,
+        latencyMs: Date.now() - startedAt,
+      });
+      return text || 'Maaf, saya belum memiliki jawaban yang tersedia.';
+    } catch (error) {
+      this.audit.recordProviderError({ error });
+      return 'Maaf, layanan Asisten SIPENGSUI sedang mengalami kendala. Silakan coba kembali beberapa saat lagi.';
+    }
+  }
+
+  private async retrieveSources(
+    question: string,
+    userId?: string,
+    roles?: string[],
+  ): Promise<KnowledgeChunk[]> {
+    const [staticSources, prismaSources, summaryChunk] = await Promise.all([
+      this.staticKnowledge.search(question, { limit: 3, userId, roles }),
+      this.prismaKnowledge.search(question, { limit: 4, userId, roles }),
+      this.prismaKnowledge.getSummaryChunk(),
+    ]);
+    return dedupeSources([
+      ...(summaryChunk ? [summaryChunk] : []),
+      ...staticSources,
+      ...prismaSources,
+    ]).slice(0, 5);
   }
 }
 

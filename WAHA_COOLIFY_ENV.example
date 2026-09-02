@@ -1,0 +1,54 @@
+# WAHA container environment for Coolify
+# This file configures WAHA, not sipengsui-api.
+# Fill secrets through the Coolify secret manager. Do not commit real values.
+# This template is only for the separate WAHA application in Coolify.
+
+# ====================
+# ===== SECURITY =====
+# ====================
+WAHA_API_KEY=
+WAHA_DASHBOARD_USERNAME=admin
+WAHA_DASHBOARD_PASSWORD=
+WHATSAPP_SWAGGER_USERNAME=admin
+WHATSAPP_SWAGGER_PASSWORD=
+
+# Public HTTPS URL of this WAHA service.
+# Use the same hostname for both values unless the deployment requires otherwise.
+WAHA_BASE_URL=https://waha.sipengsui.id
+WAHA_PUBLIC_URL=https://waha.sipengsui.id
+
+# Dashboard is needed for the initial QR pairing. Restrict it with HTTPS,
+# firewall/VPN/IP allowlist, then disable it after pairing if operations allow.
+WAHA_DASHBOARD_ENABLED=true
+WHATSAPP_SWAGGER_ENABLED=false
+
+# ==================
+# ===== COMMON =====
+# ==================
+# Must match sipengsui-api: WAHA_EXPECTED_ENGINE=WEBJS
+WHATSAPP_DEFAULT_ENGINE=WEBJS
+WAHA_NAMESPACE=all
+WAHA_CLIENT_DEVICE_NAME=SIPENGSUI
+
+# ===================
+# ===== LOGGING =====
+# ===================
+WAHA_LOG_FORMAT=JSON
+WAHA_LOG_LEVEL=info
+WAHA_PRINT_QR=false
+
+# =========================
+# ===== MEDIA STORAGE =====
+# =========================
+WAHA_MEDIA_STORAGE=LOCAL
+WHATSAPP_FILES_LIFETIME=0
+WHATSAPP_FILES_FOLDER=/app/.media
+
+# Coolify persistent storage mounts are required separately:
+#   sessions -> /app/.sessions
+#   media    -> /app/.media
+
+# Webhooks are configured per session with
+# WAHA_SESSION_WEBHOOK.example.json. Prefer session-level configuration over
+# a global wildcard webhook. The HMAC key in that payload must equal the
+# sipengsui-api value WAHA_WEBHOOK_HMAC_KEY, but must differ from WAHA_API_KEY.

@@ -101,6 +101,76 @@ const ALL_PERMISSIONS = [
     name: 'Kelola Berkas Rekomtek',
     group: 'rekomtek',
   },
+  {
+    slug: 'rekomtek.workflow.read',
+    name: 'Lihat antrean dan audit workflow Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.workflow.migrate',
+    name: 'Petakan record workflow Rekomtek legacy',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.assign',
+    name: 'Tunjuk Pokja Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.evaluate',
+    name: 'Evaluasi Berkas Rekomtek oleh Pokja',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.correct.initial',
+    name: 'Kirim Perbaikan Dokumen Awal',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.correct.post-expose',
+    name: 'Kirim Pelengkapan Pasca-Ekspose',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.expose',
+    name: 'Kelola Ekspose Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.field',
+    name: 'Kelola SPT dan Kunjungan Lapangan',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.council',
+    name: 'Kelola Sidang Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.draft',
+    name: 'Susun hasil dan draft Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.inspect',
+    name: 'Periksa hasil sebagai Pejabat Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.approve.final',
+    name: 'Setujui hasil sebagai Atasan Pejabat',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.artifact',
+    name: 'Kelola Artefak Proses Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.publish.final',
+    name: 'Terbitkan Dokumen Rekomtek final',
+    group: 'rekomtek',
+  },
 
   // ── Flowchart ──
   { slug: 'flowchart.read', name: 'Lihat Flowchart', group: 'flowchart' },
@@ -307,6 +377,199 @@ async function main() {
 
   console.log(`Admin news permissions synced for ${adminUsers.length} user(s)`);
 
+  const workflowReaderUsers = await prisma.user.findMany({
+    where: {
+      OR: [
+        {
+          role: {
+            name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+          },
+        },
+        {
+          userRoles: {
+            some: {
+              role: {
+                name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+              },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  const workflowReadPermission = permissionMap['rekomtek.workflow.read'];
+  for (const workflowReader of workflowReaderUsers) {
+    await prisma.userPermission.upsert({
+      where: {
+        userId_permissionId: {
+          userId: workflowReader.id,
+          permissionId: workflowReadPermission.id,
+        },
+      },
+      update: {},
+      create: {
+        userId: workflowReader.id,
+        permissionId: workflowReadPermission.id,
+      },
+    });
+  }
+  console.log(
+    `Rekomtek workflow read permission synced for ${workflowReaderUsers.length} staff user(s)`,
+  );
+
+  const pejabatUsers = await prisma.user.findMany({
+    where: {
+      OR: [
+        { role: { name: 'PIMPINAN' } },
+        { userRoles: { some: { role: { name: 'PIMPINAN' } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  const pejabatWorkflowPermissionSlugs = [
+    'rekomtek.read',
+    'rekomtek.assign',
+    'rekomtek.expose',
+    'rekomtek.field',
+    'rekomtek.artifact',
+  ];
+  for (const pejabat of pejabatUsers) {
+    for (const slug of pejabatWorkflowPermissionSlugs) {
+      await prisma.userPermission.upsert({
+        where: {
+          userId_permissionId: {
+            userId: pejabat.id,
+            permissionId: permissionMap[slug].id,
+          },
+        },
+        update: {},
+        create: {
+          userId: pejabat.id,
+          permissionId: permissionMap[slug].id,
+        },
+      });
+    }
+  }
+  console.log(
+    `Rekomtek Pejabat workflow permissions synced for ${pejabatUsers.length} user(s)`,
+  );
+
+  const petugasUsers = await prisma.user.findMany({
+    where: {
+      OR: [
+        { role: { name: 'PETUGAS' } },
+        { userRoles: { some: { role: { name: 'PETUGAS' } } } },
+      ],
+    },
+    select: {
+      id: true,
+      role: { select: { name: true } },
+      userRoles: { select: { role: { select: { name: true } } } },
+    },
+  });
+  const petugasOnlyUsers = petugasUsers.filter((petugas) => {
+    const roles = new Set<string>([
+      ...(petugas.role ? [petugas.role.name] : []),
+      ...petugas.userRoles.map(({ role }) => role.name),
+    ]);
+    return (
+      roles.has('PETUGAS') &&
+      !['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'].some((role) => roles.has(role))
+    );
+  });
+  const petugasReviewPermissionSlugs = [
+    'rekomtek.read',
+    'rekomtek.berkas',
+    'rekomtek.evaluate',
+    'rekomtek.workflow.read',
+    'rekomtek.expose',
+    'rekomtek.field',
+    'rekomtek.artifact',
+  ];
+  for (const petugas of petugasUsers) {
+    for (const slug of petugasReviewPermissionSlugs) {
+      await prisma.userPermission.upsert({
+        where: {
+          userId_permissionId: {
+            userId: petugas.id,
+            permissionId: permissionMap[slug].id,
+          },
+        },
+        update: {},
+        create: {
+          userId: petugas.id,
+          permissionId: permissionMap[slug].id,
+        },
+      });
+    }
+  }
+  console.log(
+    `Rekomtek review permissions synced for ${petugasUsers.length} Petugas user(s)`,
+  );
+
+  const petugasRestrictedPermissionIds = ['rekomtek.submit'].map(
+    (slug) => permissionMap[slug].id,
+  );
+  await prisma.userPermission.deleteMany({
+    where: {
+      userId: { in: petugasOnlyUsers.map(({ id }) => id) },
+      permissionId: { in: petugasRestrictedPermissionIds },
+    },
+  });
+  console.log(
+    `Rekomtek application-management permissions removed from ${petugasOnlyUsers.length} Petugas-only user(s)`,
+  );
+
+  const applicantUsers = await prisma.user.findMany({
+    where: {
+      OR: [
+        { role: { name: 'USER' } },
+        { userRoles: { some: { role: { name: 'USER' } } } },
+      ],
+      NOT: [
+        {
+          role: {
+            name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+          },
+        },
+        {
+          userRoles: {
+            some: {
+              role: {
+                name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+              },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  for (const applicant of applicantUsers) {
+    for (const slug of [
+      'rekomtek.correct.initial',
+      'rekomtek.correct.post-expose',
+    ]) {
+      await prisma.userPermission.upsert({
+        where: {
+          userId_permissionId: {
+            userId: applicant.id,
+            permissionId: permissionMap[slug].id,
+          },
+        },
+        update: {},
+        create: {
+          userId: applicant.id,
+          permissionId: permissionMap[slug].id,
+        },
+      });
+    }
+  }
+  console.log(
+    `Rekomtek correction permissions synced for ${applicantUsers.length} applicant user(s)`,
+  );
+
   if (!IS_PRODUCTION) {
     const hydrology = await prisma.newsCategory.create({
       data: {
@@ -493,6 +756,34 @@ async function main() {
     const existingMap = new Map(existing.map((e) => [e.kode, e]));
 
     for (const item of items) {
+      const isSensitive = /\bKTP\b|rekening/i.test(item.uraian);
+      const isSpreadsheet = /excel|calculation sheet|spreadsheet/i.test(
+        item.uraian,
+      );
+      const isPresentation = /powerpoint|presentasi|slide/i.test(item.uraian);
+      const sourcePolicy = {
+        allowedSourceTypes: ['GOOGLE_DRIVE'],
+        sensitivity: isSensitive ? 'SENSITIVE' : 'ORDINARY',
+        accessPolicy: 'DRIVE_PUBLIC_ONLY',
+        allowedMimeTypes: isSensitive
+          ? ['application/pdf', 'image/jpeg', 'image/png']
+          : [
+              'application/pdf',
+              'image/jpeg',
+              'image/png',
+              'image/webp',
+              'text/csv',
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            ],
+        maxFileSize: 10 * 1024 * 1024,
+        allowedExportFormats: isSpreadsheet
+          ? ['xlsx', 'pdf']
+          : isPresentation
+            ? ['pptx', 'pdf']
+            : ['pdf'],
+      };
       const existingItem = existingMap.get(item.kode);
       if (existingItem) {
         await prisma.rekomtekBerkasTemplate.update({
@@ -502,6 +793,7 @@ async function main() {
             uraian: item.uraian,
             isRequired: item.isRequired,
             hasSubItems: item.hasSubItems,
+            ...sourcePolicy,
           },
         });
       } else {
@@ -514,6 +806,7 @@ async function main() {
             uraian: item.uraian,
             isRequired: item.isRequired,
             hasSubItems: item.hasSubItems,
+            ...sourcePolicy,
           },
         });
       }
@@ -1664,6 +1957,126 @@ async function main() {
   });
 
   console.log('✅ Flowchart rekomtek seeded');
+
+  // State machine Rekomtek terbaru menjadi representasi publik yang menjadi
+  // sumber istilah untuk dashboard dan chatbot. Upsert kedua ini sengaja
+  // diletakkan setelah seed diagram legacy agar deployment existing menerima
+  // graph baru tanpa menghapus record flowchart lain.
+  const workflowStageNodes = [
+    ['PEMOHON_DRAFT', 'Draft Pemohon', 'start_end'],
+    ['MENUNGGU_PENUNJUKAN_POKJA', 'Menunggu Penunjukan Pokja', 'process'],
+    ['EVALUASI_DOKUMEN_AWAL', 'Evaluasi Dokumen Awal', 'process'],
+    ['PERBAIKAN_AWAL_PEMOHON', 'Perbaikan Dokumen Awal Pemohon', 'process'],
+    ['EVALUASI_DOKUMEN_ULANG', 'Evaluasi Dokumen Ulang', 'decision'],
+    ['PENYUSUNAN_SURAT_PENOLAKAN', 'Penyusunan Surat Penolakan', 'document'],
+    ['DITOLAK', 'Surat Penolakan Terbit', 'start_end'],
+    ['MENUNGGU_JADWAL_EKSPOSE', 'Menunggu Jadwal Ekspose', 'process'],
+    ['EKSPOSE_TERJADWAL', 'Ekspose Terjadwal', 'process'],
+    ['MENUNGGU_BA_EKSPOSE', 'Menunggu BA Ekspose', 'document'],
+    [
+      'VERIFIKASI_HASIL_EKSPOSE',
+      'Keputusan Pejabat: Revisi atau Lanjut',
+      'decision',
+    ],
+    ['PERBAIKAN_PASCA_EKSPOSE', 'Perbaikan Pasca-Ekspose', 'process'],
+    [
+      'VERIFIKASI_PERBAIKAN_PASCA_EKSPOSE',
+      'Verifikasi Perbaikan Pasca-Ekspose',
+      'decision',
+    ],
+    ['MENUNGGU_SPT_LAPANGAN', 'Menunggu SPT Lapangan', 'process'],
+    [
+      'KUNJUNGAN_LAPANGAN_DITUGASKAN',
+      'Kunjungan Lapangan Ditugaskan',
+      'process',
+    ],
+    ['MENUNGGU_BA_LAPANGAN', 'Menunggu BA Lapangan', 'document'],
+    ['PERSIAPAN_SIDANG_REKOMTEK', 'Persiapan Sidang Rekomtek', 'process'],
+    ['MENUNGGU_BA_SIDANG_REKOMTEK', 'Menunggu BA Sidang Rekomtek', 'document'],
+    ['PENYUSUNAN_HASIL_REKOMTEK', 'Penyusunan Hasil Rekomtek', 'process'],
+    ['PEMERIKSAAN_PEJABAT', 'Pemeriksaan Pejabat Rekomtek', 'decision'],
+    [
+      'MENUNGGU_PERSETUJUAN_ATASAN',
+      'Menunggu Persetujuan Atasan Pejabat',
+      'decision',
+    ],
+    ['DISETUJUI_ATASAN', 'Disetujui Atasan Pejabat', 'process'],
+    ['DOKUMEN_REKOMTEK_TERBIT', 'Dokumen Rekomtek Terbit', 'start_end'],
+  ].map(([id, label, type], index) => ({
+    id,
+    label,
+    type,
+    position: { x: (index % 3) * 360, y: Math.floor(index / 3) * 140 },
+    fill: type === 'document' ? '#fff4dd' : '#e5f6f6',
+    stroke: type === 'document' ? '#b7791f' : '#007a85',
+    textColor: '#073b41',
+  }));
+  const workflowStageEdges = [
+    ['PEMOHON_DRAFT', 'MENUNGGU_PENUNJUKAN_POKJA'],
+    ['MENUNGGU_PENUNJUKAN_POKJA', 'EVALUASI_DOKUMEN_AWAL'],
+    ['EVALUASI_DOKUMEN_AWAL', 'PERBAIKAN_AWAL_PEMOHON'],
+    ['EVALUASI_DOKUMEN_AWAL', 'MENUNGGU_JADWAL_EKSPOSE'],
+    ['PERBAIKAN_AWAL_PEMOHON', 'EVALUASI_DOKUMEN_ULANG'],
+    ['EVALUASI_DOKUMEN_ULANG', 'PENYUSUNAN_SURAT_PENOLAKAN'],
+    ['EVALUASI_DOKUMEN_ULANG', 'MENUNGGU_JADWAL_EKSPOSE'],
+    ['PENYUSUNAN_SURAT_PENOLAKAN', 'DITOLAK'],
+    ['MENUNGGU_JADWAL_EKSPOSE', 'EKSPOSE_TERJADWAL'],
+    ['EKSPOSE_TERJADWAL', 'MENUNGGU_BA_EKSPOSE'],
+    ['MENUNGGU_BA_EKSPOSE', 'VERIFIKASI_HASIL_EKSPOSE'],
+    [
+      'VERIFIKASI_HASIL_EKSPOSE',
+      'PERBAIKAN_PASCA_EKSPOSE',
+      'Ada revisi dokumen',
+    ],
+    [
+      'VERIFIKASI_HASIL_EKSPOSE',
+      'MENUNGGU_SPT_LAPANGAN',
+      'Tidak ada revisi',
+    ],
+    ['PERBAIKAN_PASCA_EKSPOSE', 'VERIFIKASI_PERBAIKAN_PASCA_EKSPOSE'],
+    ['VERIFIKASI_PERBAIKAN_PASCA_EKSPOSE', 'PERBAIKAN_PASCA_EKSPOSE'],
+    ['VERIFIKASI_PERBAIKAN_PASCA_EKSPOSE', 'MENUNGGU_SPT_LAPANGAN'],
+    ['MENUNGGU_SPT_LAPANGAN', 'KUNJUNGAN_LAPANGAN_DITUGASKAN'],
+    ['KUNJUNGAN_LAPANGAN_DITUGASKAN', 'MENUNGGU_BA_LAPANGAN'],
+    ['MENUNGGU_BA_LAPANGAN', 'PERSIAPAN_SIDANG_REKOMTEK'],
+    ['PERSIAPAN_SIDANG_REKOMTEK', 'MENUNGGU_BA_SIDANG_REKOMTEK'],
+    ['MENUNGGU_BA_SIDANG_REKOMTEK', 'PENYUSUNAN_HASIL_REKOMTEK'],
+    ['PENYUSUNAN_HASIL_REKOMTEK', 'PEMERIKSAAN_PEJABAT'],
+    ['PEMERIKSAAN_PEJABAT', 'PENYUSUNAN_HASIL_REKOMTEK'],
+    ['PEMERIKSAAN_PEJABAT', 'MENUNGGU_PERSETUJUAN_ATASAN'],
+    ['MENUNGGU_PERSETUJUAN_ATASAN', 'PENYUSUNAN_HASIL_REKOMTEK'],
+    ['MENUNGGU_PERSETUJUAN_ATASAN', 'DISETUJUI_ATASAN'],
+    ['DISETUJUI_ATASAN', 'DOKUMEN_REKOMTEK_TERBIT'],
+  ].map(([source, target, label], index) => ({
+    id: `workflow-${index + 1}`,
+    source,
+    target,
+    type: 'smoothstep',
+    ...(label ? { label } : {}),
+  }));
+
+  await prisma.flowchart.upsert({
+    where: { slug: 'rekomtek' },
+    update: {
+      title: 'State Machine Permohonan Rekomtek',
+      description:
+        'Tahap rinci, jalur satu kali Perbaikan Awal, jalur Perbaikan Pasca-Ekspose, dan penerbitan dokumen final.',
+      isPublished: true,
+      nodes: workflowStageNodes as any,
+      edges: workflowStageEdges as any,
+    },
+    create: {
+      slug: 'rekomtek',
+      title: 'State Machine Permohonan Rekomtek',
+      description:
+        'Tahap rinci, jalur satu kali Perbaikan Awal, jalur Perbaikan Pasca-Ekspose, dan penerbitan dokumen final.',
+      isPublished: true,
+      nodes: workflowStageNodes as any,
+      edges: workflowStageEdges as any,
+    },
+  });
+
+  console.log('✅ Flowchart state machine rekomtek seeded');
 
   console.log('\n🎉 Seeding complete!\n');
   if (IS_PRODUCTION) {

@@ -49,6 +49,9 @@ lerna-debug.log*
 # Runtime uploads
 /uploads
 
+# Private runtime storage
+/storage
+
 # Runtime data
 pids
 *.pid

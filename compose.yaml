@@ -31,8 +31,11 @@ services:
       REKOMTEK_BERKAS_STORAGE_DIR: ${REKOMTEK_BERKAS_STORAGE_DIR:-/app/storage/rekomtek-berkas}
       REKOMTEK_DRIVE_TIMEOUT_MS: ${REKOMTEK_DRIVE_TIMEOUT_MS:-10000}
       REKOMTEK_DEFAULT_MAX_FILE_SIZE_BYTES: ${REKOMTEK_DEFAULT_MAX_FILE_SIZE_BYTES:-10485760}
-      REKOMTEK_ANTIVIRUS_COMMAND: ${REKOMTEK_ANTIVIRUS_COMMAND:-}
-      REKOMTEK_ANTIVIRUS_TIMEOUT_MS: ${REKOMTEK_ANTIVIRUS_TIMEOUT_MS:-30000}
+      REKOMTEK_ANTIVIRUS_COMMAND: ${REKOMTEK_ANTIVIRUS_COMMAND:-clamscan}
+      REKOMTEK_ANTIVIRUS_ARGS: '${REKOMTEK_ANTIVIRUS_ARGS:-["--infected","--no-summary","{file}"]}'
+      REKOMTEK_ANTIVIRUS_TIMEOUT_MS: ${REKOMTEK_ANTIVIRUS_TIMEOUT_MS:-120000}
+      CLAMAV_FRESHCLAM_CHECKS: ${CLAMAV_FRESHCLAM_CHECKS:-12}
+      CLAMAV_FRESHCLAM_DAEMON: ${CLAMAV_FRESHCLAM_DAEMON:-true}
       # News CMS storage: local untuk development, s3/r2 untuk production
       NEWS_STORAGE_DRIVER: ${NEWS_STORAGE_DRIVER:-local}
       NEWS_STORAGE_PUBLIC_URL: ${NEWS_STORAGE_PUBLIC_URL:-http://localhost:3000}
@@ -124,6 +127,7 @@ services:
     volumes:
       - uploads-data:/app/uploads
       - rekomtek-storage-data:/app/storage
+      - clamav-definitions:/var/lib/clamav
     depends_on:
       db:
         condition: service_healthy
@@ -132,3 +136,4 @@ volumes:
   db-data:
   uploads-data:
   rekomtek-storage-data:
+  clamav-definitions:

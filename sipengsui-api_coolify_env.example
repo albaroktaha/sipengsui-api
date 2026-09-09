@@ -42,9 +42,13 @@ TRUST_PROXY=1
 REKOMTEK_BERKAS_STORAGE_DIR=/app/storage/rekomtek-berkas
 REKOMTEK_DRIVE_TIMEOUT_MS=10000
 REKOMTEK_DEFAULT_MAX_FILE_SIZE_BYTES=10485760
-# Kosong berarti pemeriksaan antivirus berstatus Pending Check.
-REKOMTEK_ANTIVIRUS_COMMAND=
-REKOMTEK_ANTIVIRUS_TIMEOUT_MS=30000
+# ClamAV tersedia di image production. Jangan gunakan path Windows Defender.
+REKOMTEK_ANTIVIRUS_COMMAND=clamscan
+# JSON array argumen scanner; {file} diganti path file yang diperiksa.
+REKOMTEK_ANTIVIRUS_ARGS='["--infected","--no-summary","{file}"]'
+REKOMTEK_ANTIVIRUS_TIMEOUT_MS=120000
+CLAMAV_FRESHCLAM_CHECKS=12
+CLAMAV_FRESHCLAM_DAEMON=true
 
 # Local storage membutuhkan persistent volume /app/uploads.
 # Untuk object storage, ubah driver menjadi s3 atau r2 dan isi S3_*.
@@ -185,6 +189,7 @@ RUN_SEED=false
 # Tambahkan persistent storage pada resource sipengsui-api:
 #   /app/uploads
 #   /app/storage
+#   /var/lib/clamav
 #
 # Resource WAHA memiliki volume terpisah:
 #   /app/.sessions

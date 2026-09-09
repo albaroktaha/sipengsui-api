@@ -23,9 +23,16 @@ FROM node:22-alpine AS production
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV REKOMTEK_ANTIVIRUS_COMMAND=clamscan
+ENV REKOMTEK_ANTIVIRUS_TIMEOUT_MS=120000
+ENV CLAMAV_FRESHCLAM_CHECKS=12
+ENV CLAMAV_FRESHCLAM_DAEMON=true
 
-# Prisma engines need openssl at runtime
-RUN apk add --no-cache openssl
+# Prisma membutuhkan OpenSSL. Rekomtek memakai ClamAV untuk memindai file
+# privat sebelum artefak dapat difinalkan.
+RUN apk add --no-cache openssl clamav-scanner freshclam \
+    && mkdir -p /var/lib/clamav \
+    && chown -R clamav:clamav /var/lib/clamav
 
 # Install production deps (prisma CLI included so `migrate deploy` works at runtime)
 COPY package.json package-lock.json ./

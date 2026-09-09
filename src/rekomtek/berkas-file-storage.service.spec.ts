@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -105,6 +105,57 @@ describe('validateBerkasFileSignature', () => {
       if (previousScanner === undefined)
         delete process.env.REKOMTEK_ANTIVIRUS_COMMAND;
       else process.env.REKOMTEK_ANTIVIRUS_COMMAND = previousScanner;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('supports scanner arguments with a file placeholder', async () => {
+    const root = join(tmpdir(), `sipengsui-berkas-${randomUUID()}`);
+    const scannerPath = join(root, 'scanner.cjs');
+    const previousRoot = process.env.REKOMTEK_BERKAS_STORAGE_DIR;
+    const previousScanner = process.env.REKOMTEK_ANTIVIRUS_COMMAND;
+    const previousScannerArgs = process.env.REKOMTEK_ANTIVIRUS_ARGS;
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      scannerPath,
+      "process.exit(process.argv[2]?.endsWith('.pdf') ? 0 : 2);\n",
+      'utf8',
+    );
+    process.env.REKOMTEK_BERKAS_STORAGE_DIR = root;
+    process.env.REKOMTEK_ANTIVIRUS_COMMAND = process.execPath;
+    process.env.REKOMTEK_ANTIVIRUS_ARGS = JSON.stringify([
+      scannerPath,
+      '{file}',
+    ]);
+
+    try {
+      const service = new BerkasFileStorageService();
+      const result = await service.stage(
+        {
+          buffer: Buffer.from('%PDF-1.7\n'),
+          mimetype: 'application/pdf',
+          size: 9,
+          originalname: 'clean.pdf',
+        } as Express.Multer.File,
+        { allowedMimeTypes: ['application/pdf'], maxFileSize: 1024 },
+      );
+
+      expect(result).toMatchObject({
+        technicalStatus: 'VALID',
+        technicalCode: 'SCAN_CLEAN',
+      });
+      expect(result.storageKey).toMatch(/^active\//);
+      await service.remove(result.storageKey);
+    } finally {
+      if (previousRoot === undefined)
+        delete process.env.REKOMTEK_BERKAS_STORAGE_DIR;
+      else process.env.REKOMTEK_BERKAS_STORAGE_DIR = previousRoot;
+      if (previousScanner === undefined)
+        delete process.env.REKOMTEK_ANTIVIRUS_COMMAND;
+      else process.env.REKOMTEK_ANTIVIRUS_COMMAND = previousScanner;
+      if (previousScannerArgs === undefined)
+        delete process.env.REKOMTEK_ANTIVIRUS_ARGS;
+      else process.env.REKOMTEK_ANTIVIRUS_ARGS = previousScannerArgs;
       await rm(root, { recursive: true, force: true });
     }
   });

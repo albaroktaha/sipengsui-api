@@ -77,6 +77,24 @@ function startsWithBytes(buffer: Buffer, bytes: number[]): boolean {
   return bytes.every((value, index) => buffer[index] === value);
 }
 
+function antivirusArguments(absolutePath: string): string[] {
+  const configured = process.env.REKOMTEK_ANTIVIRUS_ARGS?.trim();
+  if (!configured) return [absolutePath];
+
+  const parsed: unknown = JSON.parse(configured);
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every((value) => typeof value === 'string')
+  ) {
+    throw new Error('REKOMTEK_ANTIVIRUS_ARGS wajib berupa JSON array string');
+  }
+  const hasFilePlaceholder = parsed.includes('{file}');
+  const args = parsed.map((value) =>
+    value === '{file}' ? absolutePath : value,
+  );
+  return hasFilePlaceholder ? args : [...args, absolutePath];
+}
+
 export function validateBerkasFileSignature(
   buffer: Buffer,
   declaredMimeType: string,
@@ -268,8 +286,19 @@ export class BerkasFileStorageService {
       };
     }
 
+    let args: string[];
     try {
-      await execFileAsync(command, [absolutePath], {
+      args = antivirusArguments(absolutePath);
+    } catch {
+      return {
+        technicalStatus: 'PENDING_CHECK',
+        technicalCode: 'ANTIVIRUS_CONFIG_INVALID',
+        technicalMessage: 'Konfigurasi argumen antivirus tidak valid.',
+      };
+    }
+
+    try {
+      await execFileAsync(command, args, {
         timeout: Number(process.env.REKOMTEK_ANTIVIRUS_TIMEOUT_MS ?? 30000),
         windowsHide: true,
       });

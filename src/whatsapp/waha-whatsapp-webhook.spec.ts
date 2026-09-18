@@ -46,7 +46,10 @@ describe('WhatsAppWebhookService with WAHA events', () => {
     };
     const inbox = { process: jest.fn().mockResolvedValue(undefined) };
     const dispatcher = { recordDeliveryStatus: jest.fn() };
-    const provider = { observeSessionStatus: jest.fn() };
+    const provider = {
+      observeSessionStatus: jest.fn(),
+      resolveLidPhone: jest.fn().mockResolvedValue(null),
+    };
     const service = new WhatsAppWebhookService(
       prisma as never,
       { ...config(), ...overrides } as never,
@@ -102,6 +105,111 @@ describe('WhatsAppWebhookService with WAHA events', () => {
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(inbox.process).toHaveBeenCalledWith('inbound-1');
+  });
+
+  it('accepts an inbound @lid message when SenderAlt provides the phone number', async () => {
+    const { service, prisma, identities, inbox } = makeService();
+    const payload = envelope('message', {
+      id: 'false_177433789616307@lid_message-lid-1',
+      timestamp: Math.floor(now / 1_000),
+      from: '177433789616307@lid',
+      to: '6281260191515@c.us',
+      fromMe: false,
+      source: 'app',
+      body: 'MENU',
+      hasMedia: false,
+      _data: {
+        Info: { SenderAlt: '6281234567890@s.whatsapp.net' },
+      },
+    });
+    const rawBody = Buffer.from(JSON.stringify(payload));
+
+    await expect(
+      service.accept({
+        rawBody,
+        signature: sign(rawBody, 'webhook-key'),
+        algorithm: 'sha512',
+        timestamp: String(now),
+        requestId: 'request-lid-1',
+        contentType: 'application/json',
+      }),
+    ).resolves.toEqual({ status: 'accepted' });
+
+    expect(identities.getOrCreateIdentity).toHaveBeenCalledWith(
+      '+6281234567890',
+      '6281234567890',
+    );
+    expect(prisma.whatsAppInboundEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          providerRequestId: 'request-lid-1',
+          messageType: WhatsAppMessageType.TEXT,
+          textBody: 'MENU',
+        }),
+      }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(inbox.process).toHaveBeenCalledWith('inbound-1');
+  });
+
+  it('accepts an inbound @lid message through the WAHA LIDs fallback', async () => {
+    const { service, identities, provider } = makeService();
+    provider.resolveLidPhone.mockResolvedValue('+6281234567890');
+    const payload = envelope('message', {
+      id: 'false_177433789616307@lid_message-lid-fallback',
+      timestamp: Math.floor(now / 1_000),
+      from: '177433789616307@lid',
+      to: '6281260191515@c.us',
+      fromMe: false,
+      source: 'app',
+      body: 'MENU',
+    });
+    const rawBody = Buffer.from(JSON.stringify(payload));
+
+    await expect(
+      service.accept({
+        rawBody,
+        signature: sign(rawBody, 'webhook-key'),
+        algorithm: 'sha512',
+        timestamp: String(now),
+        requestId: 'request-lid-fallback',
+        contentType: 'application/json',
+      }),
+    ).resolves.toEqual({ status: 'accepted' });
+
+    expect(provider.resolveLidPhone).toHaveBeenCalledWith(
+      '177433789616307@lid',
+    );
+    expect(identities.getOrCreateIdentity).toHaveBeenCalledWith(
+      '+6281234567890',
+      '6281234567890',
+    );
+  });
+
+  it('rejects an inbound @lid message without a safe phone mapping', async () => {
+    const { service, prisma, identities } = makeService();
+    const payload = envelope('message', {
+      id: 'false_177433789616307@lid_message-lid-unresolved',
+      timestamp: Math.floor(now / 1_000),
+      from: '177433789616307@lid',
+      fromMe: false,
+      source: 'app',
+      body: 'MENU',
+    });
+    const rawBody = Buffer.from(JSON.stringify(payload));
+
+    await expect(
+      service.accept({
+        rawBody,
+        signature: sign(rawBody, 'webhook-key'),
+        algorithm: 'sha512',
+        timestamp: String(now),
+        requestId: 'request-lid-unresolved',
+        contentType: 'application/json',
+      }),
+    ).resolves.toEqual({ status: 'ignored' });
+    expect(identities.getOrCreateIdentity).not.toHaveBeenCalled();
+    expect(prisma.whatsAppInboundEvent.create).not.toHaveBeenCalled();
   });
 
   it('rejects wrong algorithm, stale timestamp, and missing request id before persistence', async () => {

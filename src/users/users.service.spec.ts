@@ -75,14 +75,23 @@ describe('UsersService role synchronization', () => {
       name: 'PETUGAS',
     });
     prisma.userRole.findUnique.mockResolvedValue(null);
-    prisma.permission.findMany.mockResolvedValue([
+    const availablePermissions = [
       { id: 'read-id', slug: 'rekomtek.read' },
       { id: 'berkas-id', slug: 'rekomtek.berkas' },
       { id: 'evaluate-id', slug: 'rekomtek.evaluate' },
+      { id: 'reject-id', slug: 'rekomtek.reject' },
       { id: 'workflow-read-id', slug: 'rekomtek.workflow.read' },
       { id: 'update-id', slug: 'rekomtek.update' },
       { id: 'delete-id', slug: 'rekomtek.delete' },
-    ]);
+    ];
+    prisma.permission.findMany.mockImplementation(
+      (args: { where?: { slug?: { in?: string[] } } }) => {
+        const requested = args.where?.slug?.in ?? [];
+        return Promise.resolve(
+          availablePermissions.filter(({ slug }) => requested.includes(slug)),
+        );
+      },
+    );
 
     await service.assignRole('user-1', 'petugas-role-id');
 
@@ -91,6 +100,7 @@ describe('UsersService role synchronization', () => {
         { userId: 'user-1', permissionId: 'read-id' },
         { userId: 'user-1', permissionId: 'berkas-id' },
         { userId: 'user-1', permissionId: 'evaluate-id' },
+        { userId: 'user-1', permissionId: 'reject-id' },
         { userId: 'user-1', permissionId: 'workflow-read-id' },
         { userId: 'user-1', permissionId: 'update-id' },
         { userId: 'user-1', permissionId: 'delete-id' },
@@ -204,7 +214,9 @@ describe('UsersService role synchronization', () => {
       },
       $transaction: jest
         .fn()
-        .mockImplementation(async (callback) => callback(tx)),
+        .mockImplementation((callback: (client: typeof tx) => unknown) =>
+          Promise.resolve(callback(tx)),
+        ),
     };
     const service = new UsersService(prisma as never);
 

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { WhatsAppMessageKey } from './whatsapp.types';
+import { normalizeWahaGroupChatId } from './whatsapp-security';
 
 @Injectable()
 export class WhatsAppConfig {
@@ -42,6 +43,7 @@ export class WhatsAppConfig {
   readonly appUrl: string;
   readonly exposeRemindersEnabled: boolean;
   readonly exposeReminderOffsetsMinutes: number[];
+  readonly exposeGroupChatId: string | null;
 
   private readonly messageVersions: Record<WhatsAppMessageKey, string>;
 
@@ -171,6 +173,12 @@ export class WhatsAppConfig {
     this.exposeReminderOffsetsMinutes = this.parseOffsets(
       config.get<string>('WHATSAPP_EXPOSE_REMINDER_OFFSETS_MINUTES'),
     );
+    const exposeGroupChatId = config
+      .get<string>('WHATSAPP_EXPOSE_GROUP_ID')
+      ?.trim();
+    this.exposeGroupChatId = exposeGroupChatId
+      ? normalizeWahaGroupChatId(exposeGroupChatId)
+      : null;
 
     this.messageVersions = {
       STAGE_CHANGED: this.readVersion('WHATSAPP_MESSAGE_STAGE_CHANGED_VERSION'),

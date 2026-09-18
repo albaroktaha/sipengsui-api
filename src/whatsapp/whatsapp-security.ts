@@ -1,5 +1,11 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 export function normalizeWhatsAppPhone(
   value: string,
   defaultCountryCode = '62',
@@ -42,13 +48,27 @@ export function normalizeWahaChatId(
   return `${normalized.slice(1)}@c.us`;
 }
 
+export function normalizeWahaGroupChatId(value: string): string {
+  const normalized = value.trim();
+  if (!/^\d{8,40}@g\.us$/.test(normalized)) {
+    throw new Error('ID group WhatsApp harus berformat <angka>@g.us');
+  }
+  return normalized;
+}
+
 export function phoneFromWahaChatId(
   chatId: string,
   defaultCountryCode = '62',
 ): string | null {
   const normalized = chatId.trim();
-  if (!normalized.endsWith('@c.us')) return null;
-  const digits = normalized.slice(0, -5);
+  const suffix = normalized.endsWith('@c.us')
+    ? '@c.us'
+    : normalized.endsWith('@s.whatsapp.net')
+      ? '@s.whatsapp.net'
+      : null;
+  if (!suffix) return null;
+  const rawDigits = normalized.slice(0, -suffix.length);
+  const digits = rawDigits.split(':', 1)[0];
   if (!/^\d{8,15}$/.test(digits)) return null;
   try {
     return normalizeWhatsAppPhone(`+${digits}`, defaultCountryCode, {
@@ -57,6 +77,45 @@ export function phoneFromWahaChatId(
   } catch {
     return null;
   }
+}
+
+export function resolveWahaMessageIdentity(
+  message: Record<string, unknown>,
+  defaultCountryCode = '62',
+): { phoneE164: string; providerWaId: string } | null {
+  const from = typeof message.from === 'string' ? message.from.trim() : '';
+  const directPhone = phoneFromWahaChatId(from, defaultCountryCode);
+  if (directPhone) {
+    return {
+      phoneE164: directPhone,
+      providerWaId: directPhone.slice(1),
+    };
+  }
+  if (!from.endsWith('@lid')) return null;
+
+  const data = asRecord(message._data);
+  const info = asRecord(data?.Info) ?? asRecord(data?.info);
+  const candidates = [
+    info?.SenderAlt,
+    info?.senderAlt,
+    info?.Sender,
+    info?.sender,
+    info?.Chat,
+    info?.chat,
+    message.senderAlt,
+    message.sender,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const phoneE164 = phoneFromWahaChatId(candidate, defaultCountryCode);
+    if (phoneE164) {
+      return {
+        phoneE164,
+        providerWaId: phoneE164.slice(1),
+      };
+    }
+  }
+  return null;
 }
 
 export function redactWhatsAppPhone(phoneE164: string): string {

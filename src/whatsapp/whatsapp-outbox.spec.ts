@@ -231,7 +231,11 @@ describe('WhatsAppOutboxService', () => {
           responsibleUserId: 'official-1',
           scheduleVersion: 1,
           status: 'TERJADWAL',
-          rekomtek: { nomor: 'REK-20260901-001' },
+          rekomtek: {
+            createdBy: 'Albar Okta',
+            createdByUser: { organization: 'PT. Bukit Asam Tbk' },
+            nomor: 'REK-20260901-001',
+          },
         }),
       },
       whatsAppIdentity: {
@@ -244,6 +248,14 @@ describe('WhatsAppOutboxService', () => {
       },
       whatsAppOutbox: { createMany },
     };
+    const registry = {
+      resolve: jest.fn().mockReturnValue({
+        messageKey: 'EXPOSE_INVITATION',
+        messageVersion: 'v1',
+        language: 'id',
+        text: 'Undangan Ekspose UND/001/2026.',
+      }),
+    };
     const service = new WhatsAppOutboxService(
       db as never,
       {
@@ -254,12 +266,81 @@ describe('WhatsAppOutboxService', () => {
         appUrl: 'https://sipengsui.example',
         messageVersion: jest.fn().mockReturnValue('v1'),
       } as never,
+      registry as never,
+    );
+
+    await expect(
+      service.enqueueExposeInvitation(db as never, {
+        scheduleId: 'schedule-1',
+        eventId: 'event-expose-1',
+      }),
+    ).resolves.toBe(1);
+
+    expect(registry.resolve).toHaveBeenCalledWith(
+      'EXPOSE_INVITATION',
+      expect.objectContaining({ companyName: 'PT. Bukit Asam Tbk' }),
+    );
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          recipientIdentityId: 'external-identity-1',
+          messageKey: 'EXPOSE_INVITATION',
+          messageVersion: 'v1',
+          textBody: 'Undangan Ekspose UND/001/2026.',
+          scheduleId: 'schedule-1',
+          dedupeKey: 'schedule-1:1:external-identity-1:EXPOSE_INVITATION:v1',
+        }),
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('creates one additional outbox job for the configured official group', async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 1 });
+    const db = {
+      rekomtekExposeSchedule: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'schedule-1',
+          rekomtekId: 'r-1',
+          startsAt: new Date('2026-09-10T02:00:00.000Z'),
+          endsAt: new Date('2026-09-10T03:00:00.000Z'),
+          timeZone: 'Asia/Jakarta',
+          method: 'DARING',
+          venue: null,
+          agenda: 'Pembahasan permohonan',
+          invitationNumber: 'UND/001/2026',
+          participants: [],
+          responsibleUserId: 'official-1',
+          scheduleVersion: 1,
+          status: 'TERJADWAL',
+          cancellationReason: null,
+          rekomtek: {
+            createdBy: 'PT. Bukit Asam Tbk',
+            createdByUser: { organization: 'PT. Bukit Asam Tbk' },
+            nomor: 'REK-20260901-001',
+          },
+        }),
+      },
+      whatsAppIdentity: { findMany: jest.fn().mockResolvedValue([]) },
+      whatsAppOutbox: { createMany },
+    };
+    const service = new WhatsAppOutboxService(
+      db as never,
+      {
+        enabled: true,
+        exposeGroupChatId: '123456789012@g.us',
+        defaultCountryCode: '62',
+        defaultLanguage: 'id',
+        maxAttempts: 6,
+        appUrl: 'https://sipengsui.example',
+        messageVersion: jest.fn().mockReturnValue('v2'),
+      } as never,
       {
         resolve: jest.fn().mockReturnValue({
           messageKey: 'EXPOSE_INVITATION',
-          messageVersion: 'v1',
+          messageVersion: 'v2',
           language: 'id',
-          text: 'Undangan Ekspose UND/001/2026.',
+          text: 'Undangan Ekspose untuk group.',
         }),
       } as never,
     );
@@ -274,12 +355,181 @@ describe('WhatsAppOutboxService', () => {
     expect(createMany).toHaveBeenCalledWith({
       data: [
         expect.objectContaining({
-          recipientIdentityId: 'external-identity-1',
+          recipientIdentityId: null,
+          recipientChatId: '123456789012@g.us',
+          recipientType: 'GROUP',
+          consentRequired: false,
           messageKey: 'EXPOSE_INVITATION',
-          messageVersion: 'v1',
-          textBody: 'Undangan Ekspose UND/001/2026.',
+          dedupeKey:
+            'schedule-1:1:GROUP:123456789012@g.us:EXPOSE_INVITATION:v2',
+        }),
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('creates a versioned reschedule notification for a scheduled expose', async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 1 });
+    const db = {
+      rekomtekExposeSchedule: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'schedule-1',
+          rekomtekId: 'r-1',
+          startsAt: new Date('2026-09-10T04:00:00.000Z'),
+          endsAt: new Date('2026-09-10T05:00:00.000Z'),
+          timeZone: 'Asia/Jakarta',
+          method: 'DARING',
+          venue: null,
+          agenda: 'Pembahasan permohonan',
+          invitationNumber: 'UND/001/2026',
+          participants: ['applicant-1'],
+          responsibleUserId: 'official-1',
+          scheduleVersion: 3,
+          status: 'TERJADWAL',
+          cancellationReason: null,
+          rekomtek: {
+            createdBy: 'Albar Okta',
+            createdByUser: { organization: 'PT. Bukit Asam Tbk' },
+            nomor: 'REK-20260901-001',
+          },
+        }),
+      },
+      whatsAppIdentity: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'identity-1',
+            userId: 'applicant-1',
+            phoneE164: '+628****7890',
+          },
+        ]),
+      },
+      whatsAppOutbox: { createMany },
+    };
+    const registry = {
+      resolve: jest.fn().mockReturnValue({
+        messageKey: 'EXPOSE_RESCHEDULED',
+        messageVersion: 'v1',
+        language: 'id',
+        text: 'Jadwal Ekspose telah diperbarui.',
+      }),
+    };
+    const service = new WhatsAppOutboxService(
+      db as never,
+      {
+        enabled: true,
+        defaultCountryCode: '62',
+        defaultLanguage: 'id',
+        maxAttempts: 6,
+        appUrl: 'https://sipengsui.example',
+        messageVersion: jest.fn().mockReturnValue('v1'),
+      } as never,
+      registry as never,
+    );
+
+    await expect(
+      service.enqueueExposeRescheduled(db as never, {
+        scheduleId: 'schedule-1',
+        eventId: 'event-reschedule-1',
+      }),
+    ).resolves.toBe(1);
+
+    expect(registry.resolve).toHaveBeenCalledWith(
+      'EXPOSE_RESCHEDULED',
+      expect.objectContaining({ companyName: 'PT. Bukit Asam Tbk' }),
+    );
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          recipientIdentityId: 'identity-1',
+          messageKey: 'EXPOSE_RESCHEDULED',
           scheduleId: 'schedule-1',
-          dedupeKey: 'schedule-1:1:external-identity-1:EXPOSE_INVITATION:v1',
+          scheduleVersion: 3,
+          dedupeKey: 'schedule-1:3:identity-1:EXPOSE_RESCHEDULED:v1',
+        }),
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('creates a cancellation notification for a cancelled expose with its reason', async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 1 });
+    const db = {
+      rekomtekExposeSchedule: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'schedule-1',
+          rekomtekId: 'r-1',
+          startsAt: new Date('2026-09-10T04:00:00.000Z'),
+          endsAt: new Date('2026-09-10T05:00:00.000Z'),
+          timeZone: 'Asia/Jakarta',
+          method: 'DARING',
+          venue: null,
+          agenda: 'Pembahasan permohonan',
+          invitationNumber: 'UND/001/2026',
+          participants: ['applicant-1'],
+          responsibleUserId: 'official-1',
+          scheduleVersion: 4,
+          status: 'DIBATALKAN',
+          cancellationReason: 'Pejabat berhalangan hadir',
+          rekomtek: {
+            createdBy: 'Albar Okta',
+            createdByUser: { organization: 'PT. Bukit Asam Tbk' },
+            nomor: 'REK-20260901-001',
+          },
+        }),
+      },
+      whatsAppIdentity: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'identity-1',
+            userId: 'applicant-1',
+            phoneE164: '+628****7890',
+          },
+        ]),
+      },
+      whatsAppOutbox: { createMany },
+    };
+    const registry = {
+      resolve: jest.fn().mockReturnValue({
+        messageKey: 'EXPOSE_CANCELLED',
+        messageVersion: 'v1',
+        language: 'id',
+        text: 'Jadwal Ekspose dibatalkan: Pejabat berhalangan hadir.',
+      }),
+    };
+    const service = new WhatsAppOutboxService(
+      db as never,
+      {
+        enabled: true,
+        defaultCountryCode: '62',
+        defaultLanguage: 'id',
+        maxAttempts: 6,
+        appUrl: 'https://sipengsui.example',
+        messageVersion: jest.fn().mockReturnValue('v1'),
+      } as never,
+      registry as never,
+    );
+
+    await expect(
+      service.enqueueExposeCancelled(db as never, {
+        scheduleId: 'schedule-1',
+        eventId: 'event-cancel-1',
+      }),
+    ).resolves.toBe(1);
+
+    expect(registry.resolve).toHaveBeenCalledWith(
+      'EXPOSE_CANCELLED',
+      expect.objectContaining({
+        companyName: 'PT. Bukit Asam Tbk',
+        cancellationReason: 'Pejabat berhalangan hadir',
+      }),
+    );
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          recipientIdentityId: 'identity-1',
+          messageKey: 'EXPOSE_CANCELLED',
+          scheduleVersion: 4,
+          dedupeKey: 'schedule-1:4:identity-1:EXPOSE_CANCELLED:v1',
         }),
       ],
       skipDuplicates: true,

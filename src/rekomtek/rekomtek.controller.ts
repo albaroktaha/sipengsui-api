@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -33,12 +34,14 @@ import type { AuthenticatedUser } from '../auth/decorators/current-user.decorato
 
 import { RekomtekService } from './rekomtek.service';
 import { RekomtekWorkflowService } from './rekomtek-workflow.service';
+import { rekomtekFileContentDisposition } from './rekomtek-file-delivery';
 
 import { CreateRekomtekDto } from './dto/create-rekomtek.dto';
 import { UpdateRekomtekDto } from './dto/update-rekomtek.dto';
 import { QueryRekomtekDto } from './dto/query-rekomtek.dto';
 import {
   AssignRekomtekTeamDto,
+  CancelExposeDto,
   CompleteExposeDto,
   CompleteFieldVisitDto,
   CompletePostExposeCorrectionDto,
@@ -50,6 +53,7 @@ import {
   IssueFieldVisitDto,
   OfficialReviewDto,
   ResolveWorkflowMigrationDto,
+  RescheduleExposeDto,
   ScheduleExposeDto,
   SubmitCorrectionDto,
   SuperiorApprovalDto,
@@ -134,6 +138,7 @@ export class RekomtekController {
   async rejectionLetterDraft(
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
+    @Headers('x-sipengsui-download-mode') downloadMode: string | undefined,
     @Res() response: Response,
   ) {
     const file = await this.workflowService.getRejectionLetterDraftPdf(
@@ -144,7 +149,7 @@ export class RekomtekController {
     response.setHeader('Content-Length', file.buffer.length);
     response.setHeader(
       'Content-Disposition',
-      `attachment; filename="${file.fileName.replace(/"/g, '')}"`,
+      rekomtekFileContentDisposition(file.fileName, downloadMode),
     );
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -276,6 +281,7 @@ export class RekomtekController {
     @Param('id') id: string,
     @Param('artifactId') artifactId: string,
     @CurrentUser() user: AuthenticatedUser,
+    @Headers('x-sipengsui-download-mode') downloadMode: string | undefined,
     @Res() response: Response,
   ) {
     const file = await this.workflowService.getArtifactFile(
@@ -287,7 +293,7 @@ export class RekomtekController {
     response.setHeader('Content-Length', file.size);
     response.setHeader(
       'Content-Disposition',
-      `attachment; filename="${file.fileName.replace(/"/g, '')}"`,
+      rekomtekFileContentDisposition(file.fileName, downloadMode),
     );
     response.setHeader('X-Content-Type-Options', 'nosniff');
     (file.stream as { pipe: (target: Response) => void }).pipe(response);
@@ -302,6 +308,30 @@ export class RekomtekController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.workflowService.scheduleExpose(id, dto, user);
+  }
+
+  @Post(':id/workflow/expose/:scheduleId/reschedule')
+  @Permissions('rekomtek.expose')
+  @ApiOperation({ summary: 'Ubah jadwal Ekspose dan beri tahu peserta' })
+  rescheduleExpose(
+    @Param('id') id: string,
+    @Param('scheduleId') scheduleId: string,
+    @Body() dto: RescheduleExposeDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.workflowService.rescheduleExpose(id, scheduleId, dto, user);
+  }
+
+  @Post(':id/workflow/expose/:scheduleId/cancel')
+  @Permissions('rekomtek.expose')
+  @ApiOperation({ summary: 'Batalkan jadwal Ekspose dan beri tahu peserta' })
+  cancelExpose(
+    @Param('id') id: string,
+    @Param('scheduleId') scheduleId: string,
+    @Body() dto: CancelExposeDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.workflowService.cancelExpose(id, scheduleId, dto, user);
   }
 
   @Post(':id/workflow/expose/:scheduleId/complete')

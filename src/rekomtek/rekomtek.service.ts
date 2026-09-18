@@ -125,6 +125,7 @@ export class RekomtekService {
   }
 
   async create(dto: CreateRekomtekDto, user: AuthenticatedUser) {
+    this.assertCanSubmitApplication(user);
     const existing = await this.prisma.rekomtek.findUnique({
       where: { nomor: dto.nomor },
     });

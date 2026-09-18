@@ -1,5 +1,6 @@
 import { NewsStatus, Prisma, PrismaClient, RoleType } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { PETUGAS_WORKFLOW_PERMISSION_SLUGS } from '../src/rekomtek/rekomtek-permission-policy';
 
 const prisma = new PrismaClient();
 
@@ -153,12 +154,12 @@ const ALL_PERMISSIONS = [
   },
   {
     slug: 'rekomtek.inspect',
-    name: 'Periksa hasil sebagai Pejabat Rekomtek',
+    name: 'Periksa hasil sebagai Kepala Seksi',
     group: 'rekomtek',
   },
   {
     slug: 'rekomtek.approve.final',
-    name: 'Setujui hasil sebagai Atasan Pejabat',
+    name: 'Setujui hasil sebagai Kepala Bidang',
     group: 'rekomtek',
   },
   {
@@ -433,6 +434,7 @@ async function main() {
     'rekomtek.expose',
     'rekomtek.field',
     'rekomtek.artifact',
+    'rekomtek.inspect',
   ];
   for (const pejabat of pejabatUsers) {
     for (const slug of pejabatWorkflowPermissionSlugs) {
@@ -478,15 +480,7 @@ async function main() {
       !['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'].some((role) => roles.has(role))
     );
   });
-  const petugasReviewPermissionSlugs = [
-    'rekomtek.read',
-    'rekomtek.berkas',
-    'rekomtek.evaluate',
-    'rekomtek.workflow.read',
-    'rekomtek.expose',
-    'rekomtek.field',
-    'rekomtek.artifact',
-  ];
+  const petugasReviewPermissionSlugs = [...PETUGAS_WORKFLOW_PERMISSION_SLUGS];
   for (const petugas of petugasUsers) {
     for (const slug of petugasReviewPermissionSlugs) {
       await prisma.userPermission.upsert({
@@ -508,9 +502,13 @@ async function main() {
     `Rekomtek review permissions synced for ${petugasUsers.length} Petugas user(s)`,
   );
 
-  const petugasRestrictedPermissionIds = ['rekomtek.submit'].map(
-    (slug) => permissionMap[slug].id,
-  );
+  const petugasRestrictedPermissionIds = [
+    'rekomtek.create',
+    'rekomtek.submit',
+    'rekomtek.correct.initial',
+    'rekomtek.correct.post-expose',
+    'disaster-reports.create',
+  ].map((slug) => permissionMap[slug].id);
   await prisma.userPermission.deleteMany({
     where: {
       userId: { in: petugasOnlyUsers.map(({ id }) => id) },

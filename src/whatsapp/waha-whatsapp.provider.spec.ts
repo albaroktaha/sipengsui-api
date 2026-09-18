@@ -66,6 +66,64 @@ describe('WahaWhatsAppProvider', () => {
     );
   });
 
+  it('sends rendered text to a configured group chat id', async () => {
+    const fetchMock = (
+      jest.fn() as jest.MockedFunction<typeof fetch>
+    ).mockResolvedValue(response({ id: 'waha-group-message-1' }));
+    globalThis.fetch = fetchMock;
+    const provider = new WahaWhatsAppProvider(config() as never);
+
+    await expect(
+      provider.sendText({
+        to: '123456789012@g.us',
+        recipientType: 'GROUP',
+        text: 'Undangan Ekspose',
+      } as never),
+    ).resolves.toEqual({ providerMessageId: 'waha-group-message-1' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://waha.example.test/api/sendText',
+      expect.objectContaining({
+        body: JSON.stringify({
+          session: 'default',
+          chatId: '123456789012@g.us',
+          text: 'Undangan Ekspose',
+          linkPreview: false,
+        }),
+      }),
+    );
+  });
+
+  it('resolves an @lid phone using the WAHA LIDs endpoint', async () => {
+    const fetchMock = (
+      jest.fn() as jest.MockedFunction<typeof fetch>
+    ).mockResolvedValue(
+      response({
+        lid: '177433789616307@lid',
+        pn: '6281234567890@c.us',
+      }),
+    );
+    globalThis.fetch = fetchMock;
+    const provider = new WahaWhatsAppProvider(config() as never);
+
+    await expect(provider.resolveLidPhone('177433789616307@lid')).resolves.toBe(
+      '+6281234567890',
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://waha.example.test/api/default/lids/177433789616307%40lid',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('rejects a malformed LID before calling WAHA', async () => {
+    const fetchMock = jest.fn() as jest.MockedFunction<typeof fetch>;
+    globalThis.fetch = fetchMock;
+    const provider = new WahaWhatsAppProvider(config() as never);
+
+    await expect(provider.resolveLidPhone('not-a-lid')).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('fails closed when WAHA accepts a request without a message id', async () => {
     globalThis.fetch = (
       jest.fn() as jest.MockedFunction<typeof fetch>
@@ -187,6 +245,32 @@ describe('WahaWhatsAppProvider', () => {
         method: 'GET',
         headers: { 'X-Api-Key': 'test-api-key', Accept: 'application/json' },
       }),
+    );
+  });
+
+  it('reports a failed session without probing restriction endpoints', async () => {
+    const fetchMock = (
+      jest.fn() as jest.MockedFunction<typeof fetch>
+    ).mockResolvedValue(
+      response({
+        name: 'default',
+        status: 'FAILED',
+        engine: 'WEBJS',
+      }),
+    );
+    globalThis.fetch = fetchMock;
+    const provider = new WahaWhatsAppProvider(config() as never);
+
+    await expect(provider.getSessionHealth()).resolves.toMatchObject({
+      session: 'default',
+      status: 'FAILED',
+      engine: 'WEBJS',
+      isWorking: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://waha.example.test/api/sessions/default',
+      expect.objectContaining({ method: 'GET' }),
     );
   });
 

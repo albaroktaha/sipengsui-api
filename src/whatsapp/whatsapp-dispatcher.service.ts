@@ -9,6 +9,7 @@ import {
   WhatsAppInboundStatus,
   WhatsAppOutboxStatus,
   WhatsAppPairingStatus,
+  WhatsAppRecipientType,
   RekomtekExposeStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -431,19 +432,35 @@ export class WhatsAppDispatcherService {
     if (!outbox) return false;
 
     const identity = outbox.recipientIdentity;
-    const linkedUserIneligible =
-      identity.userId !== null && identity.user?.isActive !== true;
-    if (
-      identity.status !== WhatsAppIdentityStatus.ACTIVE ||
-      !identity.verifiedAt ||
-      linkedUserIneligible
-    ) {
+    const isGroupRecipient =
+      outbox.recipientType === WhatsAppRecipientType.GROUP;
+    if (isGroupRecipient && !outbox.recipientChatId) {
+      await this.markCancelled(id, lockedBy, 'GROUP_CHAT_ID_MISSING');
+      return true;
+    }
+    if (!isGroupRecipient && !identity) {
       await this.markCancelled(id, lockedBy, 'IDENTITY_NOT_ELIGIBLE');
       return true;
     }
 
-    if (outbox.purpose === WhatsAppConsentPurpose.REKOMTEK_TRANSACTIONAL) {
-      const consent = identity.consents.find(
+    if (!isGroupRecipient) {
+      const linkedUserIneligible =
+        identity!.userId !== null && identity!.user?.isActive !== true;
+      if (
+        identity!.status !== WhatsAppIdentityStatus.ACTIVE ||
+        !identity!.verifiedAt ||
+        linkedUserIneligible
+      ) {
+        await this.markCancelled(id, lockedBy, 'IDENTITY_NOT_ELIGIBLE');
+        return true;
+      }
+    }
+
+    if (
+      !isGroupRecipient &&
+      outbox.purpose === WhatsAppConsentPurpose.REKOMTEK_TRANSACTIONAL
+    ) {
+      const consent = identity!.consents.find(
         (item) =>
           item.purpose === WhatsAppConsentPurpose.REKOMTEK_TRANSACTIONAL &&
           item.active,
@@ -455,10 +472,11 @@ export class WhatsAppDispatcherService {
     }
 
     if (
+      !isGroupRecipient &&
       outbox.purpose === WhatsAppConsentPurpose.SERVICE_CONVERSATION &&
       outbox.consentRequired
     ) {
-      const consent = identity.consents.find(
+      const consent = identity!.consents.find(
         (item) =>
           item.purpose === WhatsAppConsentPurpose.SERVICE_CONVERSATION &&
           item.active,
@@ -485,7 +503,9 @@ export class WhatsAppDispatcherService {
         schedule.status !== RekomtekExposeStatus.TERJADWAL ||
         schedule.scheduleVersion !== outbox.scheduleVersion ||
         schedule.startsAt <= new Date() ||
-        !this.scheduleContainsRecipient(schedule, identity)
+        (isGroupRecipient
+          ? outbox.recipientChatId !== this.config.exposeGroupChatId
+          : !identity || !this.scheduleContainsRecipient(schedule, identity))
       ) {
         await this.markStatus(
           id,
@@ -533,21 +553,29 @@ export class WhatsAppDispatcherService {
           id,
           lockedBy,
           status: WhatsAppOutboxStatus.PROCESSING,
-          recipientIdentity: {
-            status: WhatsAppIdentityStatus.ACTIVE,
-            verifiedAt: { not: null },
-            OR: [{ user: { isActive: true } }, { userId: null }],
-            ...(requiresConsent
-              ? {
-                  consents: {
-                    some: {
-                      purpose: outbox.purpose,
-                      active: true,
-                    },
-                  },
-                }
-              : {}),
-          },
+          ...(isGroupRecipient
+            ? {
+                recipientType: WhatsAppRecipientType.GROUP,
+                recipientChatId: this.config.exposeGroupChatId,
+              }
+            : {
+                recipientType: WhatsAppRecipientType.DIRECT,
+                recipientIdentity: {
+                  status: WhatsAppIdentityStatus.ACTIVE,
+                  verifiedAt: { not: null },
+                  OR: [{ user: { isActive: true } }, { userId: null }],
+                  ...(requiresConsent
+                    ? {
+                        consents: {
+                          some: {
+                            purpose: outbox.purpose,
+                            active: true,
+                          },
+                        },
+                      }
+                    : {}),
+                },
+              }),
         },
         data: {
           sendStartedAt: reservationStartedAt,
@@ -561,7 +589,8 @@ export class WhatsAppDispatcherService {
       sendStartedAt = reservationStartedAt;
       this.metrics?.increment('outbox_attempt');
       const result = await this.provider.sendText({
-        to: identity.phoneE164,
+        to: isGroupRecipient ? outbox.recipientChatId! : identity!.phoneE164,
+        ...(isGroupRecipient ? { recipientType: 'GROUP' as const } : {}),
         text: outbox.textBody,
       });
       providerSendAccepted = true;
@@ -592,10 +621,12 @@ export class WhatsAppDispatcherService {
         return true;
       }
       await this.reconcilePendingDeliveryEvents(id, result.providerMessageId);
-      await this.prisma.whatsAppConversation.updateMany({
-        where: { identityId: identity.id },
-        data: { lastOutboundAt: new Date(), lastMessageAt: new Date() },
-      });
+      if (identity) {
+        await this.prisma.whatsAppConversation.updateMany({
+          where: { identityId: identity.id },
+          data: { lastOutboundAt: new Date(), lastMessageAt: new Date() },
+        });
+      }
       return true;
     } catch (error) {
       if (providerSendAccepted && providerMessageId && sendStartedAt) {

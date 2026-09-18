@@ -1,6 +1,10 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { WhatsAppConfig } from './whatsapp.config';
-import { normalizeWahaChatId } from './whatsapp-security';
+import {
+  normalizeWahaChatId,
+  normalizeWahaGroupChatId,
+  phoneFromWahaChatId,
+} from './whatsapp-security';
 import {
   WhatsAppProviderError,
   type WhatsAppProviderPort,
@@ -38,7 +42,10 @@ export class WahaWhatsAppProvider implements WhatsAppProviderPort {
     }
     let chatId: string;
     try {
-      chatId = normalizeWahaChatId(input.to, this.config.defaultCountryCode);
+      chatId =
+        input.recipientType === 'GROUP'
+          ? normalizeWahaGroupChatId(input.to)
+          : normalizeWahaChatId(input.to, this.config.defaultCountryCode);
     } catch {
       throw new WhatsAppProviderError(
         'Nomor penerima WhatsApp tidak valid',
@@ -75,6 +82,37 @@ export class WahaWhatsAppProvider implements WhatsAppProviderPort {
     }
   }
 
+  async resolveLidPhone(lid: string): Promise<string | null> {
+    this.assertEnabled();
+    const normalized = lid.trim();
+    if (!normalized.endsWith('@lid')) return null;
+    const payload = await this.request(
+      `/api/${encodeURIComponent(this.config.wahaSession)}/lids/${encodeURIComponent(normalized)}`,
+      'GET',
+    );
+    const root = this.asRecord(payload) ?? {};
+    const data = this.asRecord(root.data);
+    const candidates = [
+      root.pn,
+      root.phoneNumber,
+      root.phone,
+      root.jid,
+      data?.pn,
+      data?.phoneNumber,
+      data?.phone,
+      data?.jid,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') continue;
+      const phoneE164 = phoneFromWahaChatId(
+        candidate,
+        this.config.defaultCountryCode,
+      );
+      if (phoneE164) return phoneE164;
+    }
+    return null;
+  }
+
   async getSessionHealth(): Promise<WhatsAppSessionHealth> {
     this.assertEnabled();
     const now = Date.now();
@@ -85,21 +123,27 @@ export class WahaWhatsAppProvider implements WhatsAppProviderPort {
       return this.cachedHealth;
     }
     try {
-      const [sessionPayload, timelockPayload, cappingPayload] =
-        await Promise.all([
-          this.request(
-            `/api/sessions/${encodeURIComponent(this.config.wahaSession)}`,
-            'GET',
-          ),
-          this.request(
-            `/api/sessions/${encodeURIComponent(this.config.wahaSession)}/timelock`,
-            'GET',
-          ),
-          this.request(
-            `/api/sessions/${encodeURIComponent(this.config.wahaSession)}/capping`,
-            'GET',
-          ),
-        ]);
+      const sessionPayload = await this.request(
+        `/api/sessions/${encodeURIComponent(this.config.wahaSession)}`,
+        'GET',
+      );
+      const sessionOnlyHealth = this.parseHealth(sessionPayload, null, null);
+      if (sessionOnlyHealth.status !== 'WORKING') {
+        this.cachedHealth = sessionOnlyHealth;
+        this.cachedHealthAt = now;
+        return sessionOnlyHealth;
+      }
+
+      const [timelockPayload, cappingPayload] = await Promise.all([
+        this.request(
+          `/api/sessions/${encodeURIComponent(this.config.wahaSession)}/timelock`,
+          'GET',
+        ),
+        this.request(
+          `/api/sessions/${encodeURIComponent(this.config.wahaSession)}/capping`,
+          'GET',
+        ),
+      ]);
       const health = this.parseHealth(
         sessionPayload,
         timelockPayload,

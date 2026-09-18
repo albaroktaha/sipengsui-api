@@ -71,6 +71,12 @@ function createFixture() {
         id: 'schedule-1',
         status: 'TERJADWAL',
       }),
+      findFirst: jest.fn().mockResolvedValue(null),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'schedule-1',
+        status: 'TERJADWAL',
+      }),
     },
     rekomtekFieldVisit: {
       create: jest.fn().mockResolvedValue({ id: 'field-visit-1' }),
@@ -115,6 +121,9 @@ function createFixture() {
       findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    rekomtekFieldVisit: {
+      findFirst: jest.fn(),
+    },
     rekomtekWorkflowEvent: tx.rekomtekWorkflowEvent,
     $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) =>
       callback(tx),
@@ -134,13 +143,21 @@ function createFixture() {
   const mailService = {
     sendRejectionLetterEmail: jest.fn().mockResolvedValue(undefined),
   };
+  const whatsappOutbox = {
+    enqueueWorkflowTransition: jest.fn().mockResolvedValue(0),
+    enqueueExposeInvitation: jest.fn().mockResolvedValue(0),
+    enqueueExposeRescheduled: jest.fn().mockResolvedValue(0),
+    enqueueExposeCancelled: jest.fn().mockResolvedValue(0),
+  };
   const service = new RekomtekWorkflowService(
     prisma as never,
     berkasService as never,
     storage as never,
     mailService as never,
+    undefined,
+    whatsappOutbox as never,
   );
-  return { service, prisma, tx, berkasService, mailService };
+  return { service, prisma, tx, berkasService, mailService, whatsappOutbox };
 }
 
 describe('RekomtekWorkflowService', () => {
@@ -186,6 +203,55 @@ describe('RekomtekWorkflowService', () => {
     await expect(
       service.getWorkflow('rekomtek-1', actor()),
     ).resolves.toBeTruthy();
+  });
+
+  it('returns display names and roles for workflow assignment members', async () => {
+    const { service, prisma } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        teamAssignments: [
+          {
+            id: 'assignment-1',
+            coordinatorId: 'pokja-1',
+            assignedById: 'pimpinan-1',
+            purpose: 'Pemeriksaan Berkas Persyaratan',
+            isActive: true,
+            members: [
+              {
+                id: 'member-1',
+                userId: 'pokja-1',
+                role: 'KOORDINATOR',
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    prisma.user.findMany.mockResolvedValue([
+      {
+        id: 'pokja-1',
+        firstName: 'Pak',
+        lastName: 'Raden',
+        role: { name: 'PETUGAS' },
+        userRoles: [],
+      },
+    ]);
+
+    const result = await service.getWorkflow('rekomtek-1', actor());
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        teamAssignments: [
+          expect.objectContaining({
+            members: [
+              expect.objectContaining({
+                user: { displayName: 'Pak Raden', roleName: 'PETUGAS' },
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
   });
 
   it('rejects a team assignment that contains a non-Petugas account', async () => {
@@ -302,6 +368,156 @@ describe('RekomtekWorkflowService', () => {
         }),
       }),
     );
+  });
+
+  it('reschedules a TERJADWAL Expose and enqueues a reschedule notification', async () => {
+    const { service, prisma, tx, whatsappOutbox } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.EKSPOSE_TERJADWAL,
+        workflowVersion: 8,
+      }),
+    );
+    prisma.rekomtekExposeSchedule.findFirst.mockResolvedValue({
+      id: 'schedule-1',
+      rekomtekId: 'rekomtek-1',
+      startsAt: new Date('2026-09-10T02:00:00.000Z'),
+      endsAt: new Date('2026-09-10T03:00:00.000Z'),
+      scheduleVersion: 2,
+      status: RekomtekExposeStatus.TERJADWAL,
+      invitationArtifactId: 'invitation-artifact-old',
+    });
+    prisma.rekomtekArtifact.findFirst.mockResolvedValue({
+      id: 'invitation-artifact-new',
+      type: RekomtekArtifactType.UNDANGAN_EKSPOSE,
+      stage: RekomtekWorkflowStage.EKSPOSE_TERJADWAL,
+      status: RekomtekArtifactStatus.FINAL,
+      technicalStatus: BerkasTechnicalStatus.VALID,
+    });
+    tx.rekomtekExposeSchedule.updateMany.mockResolvedValue({ count: 1 });
+    tx.rekomtekExposeSchedule.findUnique.mockResolvedValue({
+      id: 'schedule-1',
+      status: RekomtekExposeStatus.TERJADWAL,
+      scheduleVersion: 3,
+    });
+    tx.rekomtekWorkflowEvent.create.mockResolvedValue({
+      id: 'reschedule-event-1',
+    });
+
+    await expect(
+      service.rescheduleExpose(
+        'rekomtek-1',
+        'schedule-1',
+        {
+          startsAt: '2026-09-11T02:00:00.000Z',
+          endsAt: '2026-09-11T03:00:00.000Z',
+          invitationArtifactId: 'invitation-artifact-new',
+          reason: 'Penyesuaian agenda pejabat',
+        },
+        actor({
+          userId: 'pimpinan-1',
+          role: 'PIMPINAN',
+          roles: ['PIMPINAN'],
+          permissions: ['rekomtek.expose'],
+        }),
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 'schedule-1',
+        scheduleVersion: 3,
+      }),
+    );
+
+    expect(tx.rekomtekExposeSchedule.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'schedule-1',
+        rekomtekId: 'rekomtek-1',
+        status: RekomtekExposeStatus.TERJADWAL,
+        scheduleVersion: 2,
+      },
+      data: {
+        startsAt: new Date('2026-09-11T02:00:00.000Z'),
+        endsAt: new Date('2026-09-11T03:00:00.000Z'),
+        invitationArtifactId: 'invitation-artifact-new',
+        scheduleVersion: { increment: 1 },
+      },
+    });
+    expect(tx.rekomtekWorkflowEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fromStage: RekomtekWorkflowStage.EKSPOSE_TERJADWAL,
+        toStage: RekomtekWorkflowStage.EKSPOSE_TERJADWAL,
+        action: 'RESCHEDULE_EKSPOSE',
+        reason: 'Penyesuaian agenda pejabat',
+      }),
+    });
+    expect(whatsappOutbox.enqueueExposeRescheduled).toHaveBeenCalledWith(tx, {
+      scheduleId: 'schedule-1',
+      eventId: 'reschedule-event-1',
+    });
+  });
+
+  it('cancels a TERJADWAL Expose, returns to scheduling, and enqueues a cancellation notification', async () => {
+    const { service, prisma, tx, whatsappOutbox } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.EKSPOSE_TERJADWAL,
+        workflowVersion: 9,
+      }),
+    );
+    prisma.rekomtekExposeSchedule.findFirst.mockResolvedValue({
+      id: 'schedule-1',
+      rekomtekId: 'rekomtek-1',
+      startsAt: new Date('2026-09-10T02:00:00.000Z'),
+      endsAt: new Date('2026-09-10T03:00:00.000Z'),
+      scheduleVersion: 2,
+      status: RekomtekExposeStatus.TERJADWAL,
+    });
+    tx.rekomtekExposeSchedule.updateMany.mockResolvedValue({ count: 1 });
+    tx.rekomtekWorkflowEvent.create.mockResolvedValue({
+      id: 'cancel-event-1',
+    });
+
+    await expect(
+      service.cancelExpose(
+        'rekomtek-1',
+        'schedule-1',
+        { reason: 'Jadwal ditunda oleh Pejabat Rekomtek' },
+        actor({
+          userId: 'pimpinan-1',
+          role: 'PIMPINAN',
+          roles: ['PIMPINAN'],
+          permissions: ['rekomtek.expose'],
+        }),
+      ),
+    ).resolves.toBeTruthy();
+
+    expect(tx.rekomtekExposeSchedule.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'schedule-1',
+        rekomtekId: 'rekomtek-1',
+        status: RekomtekExposeStatus.TERJADWAL,
+        scheduleVersion: 2,
+      },
+      data: {
+        status: RekomtekExposeStatus.DIBATALKAN,
+        cancellationReason: 'Jadwal ditunda oleh Pejabat Rekomtek',
+        scheduleVersion: { increment: 1 },
+      },
+    });
+    expect(tx.rekomtek.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workflowStage: RekomtekWorkflowStage.EKSPOSE_TERJADWAL,
+        }),
+        data: expect.objectContaining({
+          workflowStage: RekomtekWorkflowStage.MENUNGGU_JADWAL_EKSPOSE,
+        }),
+      }),
+    );
+    expect(whatsappOutbox.enqueueExposeCancelled).toHaveBeenCalledWith(tx, {
+      scheduleId: 'schedule-1',
+      eventId: 'cancel-event-1',
+    });
   });
 
   it('rejects an exact active Expose start slot that is already booked', async () => {
@@ -576,6 +792,38 @@ describe('RekomtekWorkflowService', () => {
         }),
       }),
     );
+  });
+
+  it('only lets the assigned PIC record field-visit realization', async () => {
+    const { service, prisma } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.KUNJUNGAN_LAPANGAN_DITUGASKAN,
+      }),
+    );
+    prisma.rekomtekFieldVisit.findFirst.mockResolvedValue({
+      id: 'field-visit-1',
+      rekomtekId: 'rekomtek-1',
+      petugasId: 'pic-1',
+      status: 'DITUGASKAN',
+    });
+
+    await expect(
+      service.completeFieldVisit(
+        'rekomtek-1',
+        'field-visit-1',
+        {
+          realizedAt: '2026-09-03T05:00:00.000Z',
+          realizationNotes: 'Kunjungan selesai',
+        },
+        actor({
+          userId: 'member-2',
+          role: 'PETUGAS',
+          roles: ['PETUGAS'],
+          permissions: ['rekomtek.field'],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('keeps a post-Expose applicant response pending Pokja verification', async () => {

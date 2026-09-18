@@ -199,6 +199,11 @@ enum WhatsAppOutboxStatus {
   STALE
 }
 
+enum WhatsAppRecipientType {
+  DIRECT
+  GROUP
+}
+
 enum WhatsAppDeliveryStatus {
   PENDING
   SENT
@@ -1524,8 +1529,10 @@ model WhatsAppInboundEvent {
 
 model WhatsAppOutbox {
   id                  String                 @id @default(uuid())
-  recipientIdentityId String
-  recipientIdentity   WhatsAppIdentity       @relation(fields: [recipientIdentityId], references: [id], onDelete: Cascade)
+  recipientIdentityId String?
+  recipientIdentity   WhatsAppIdentity?      @relation(fields: [recipientIdentityId], references: [id], onDelete: Cascade)
+  recipientChatId     String?
+  recipientType       WhatsAppRecipientType  @default(DIRECT)
   channel             String                 @default("WHATSAPP")
   provider            String                 @default("legacy")
   purpose             WhatsAppConsentPurpose
@@ -1569,6 +1576,7 @@ model WhatsAppOutbox {
   @@index([status, nextAttemptAt])
   @@index([provider, status, nextAttemptAt])
   @@index([recipientIdentityId, status])
+  @@index([recipientChatId, status])
   @@index([providerMessageId])
   @@index([scheduleId, scheduleVersion])
   @@index([workflowEventId])

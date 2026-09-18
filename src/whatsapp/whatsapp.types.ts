@@ -13,9 +13,12 @@ export type WhatsAppMessageKey =
 
 export type WhatsAppProviderErrorKind = 'TRANSIENT' | 'PERMANENT' | 'UNKNOWN';
 
+export type WhatsAppRecipientType = 'DIRECT' | 'GROUP';
+
 export interface WhatsAppSendTextInput {
   to: string;
   text: string;
+  recipientType?: WhatsAppRecipientType;
 }
 
 export interface WhatsAppProviderSendResult {
@@ -42,6 +45,7 @@ export interface WhatsAppSessionStatusObservation {
 
 export interface WhatsAppProviderPort {
   sendText(input: WhatsAppSendTextInput): Promise<WhatsAppProviderSendResult>;
+  resolveLidPhone(lid: string): Promise<string | null>;
   getSessionHealth(): Promise<WhatsAppSessionHealth>;
   observeSessionStatus(input: WhatsAppSessionStatusObservation): void;
 }
@@ -67,7 +71,7 @@ export interface WhatsAppStageMessageContext {
 
 export interface WhatsAppExposeMessageContext {
   invitationNumber: string;
-  applicationNumber: string;
+  companyName: string;
   startsAt: Date;
   endsAt: Date;
   timeZone: string;
@@ -75,6 +79,7 @@ export interface WhatsAppExposeMessageContext {
   venue?: string | null;
   agenda: string;
   applicationUrl: string;
+  cancellationReason?: string | null;
 }
 
 export interface WhatsAppRenderedMessage {

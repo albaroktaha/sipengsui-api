@@ -36,6 +36,9 @@ docker compose up -d --build
   nilainya menimpa default (interpolasi `${VAR:-default}`).
 - `db` menjalankan healthcheck `pg_isready` — API menunggu DB siap.
 - Entrypoint API otomatis menjalankan semua migration (`prisma migrate deploy`).
+- Image API memasang `clamscan`. Entrypoint mengunduh signature ClamAV sebelum
+  API aktif dan menjalankan `freshclam` berkala. Startup pertama memerlukan
+  akses keluar HTTPS serta dapat lebih lama karena mengunduh database signature.
 
 Cek log:
 
@@ -44,6 +47,45 @@ docker compose logs -f api
 ```
 
 Swagger API: `http://localhost:3000/api`
+
+## Quick start WhatsApp full-local
+
+Stack WhatsApp lokal memakai file terpisah agar konfigurasi SumoPod/production
+tidak ikut terbawa:
+
+```bash
+cp .env.api.waha.local.example .env.api.waha.local
+cp .env.waha.local.example .env.waha.local
+# Isi JWT secret lokal pada file API, API key WAHA yang sama pada kedua file,
+# HMAC key khusus webhook pada file API, dan password Dashboard hanya pada WAHA.
+npm run whatsapp:local:preflight
+npm run whatsapp:local:config
+npm run whatsapp:local:up
+npm run whatsapp:local:seed # satu kali, hanya untuk database lokal baru
+```
+
+Service dan alamatnya:
+
+| Service | Host | Antar-container |
+|---|---|---|
+| SIPENGSUI API | `http://localhost:3000` | `http://api:3000` |
+| WAHA Dashboard | `http://localhost:3002/dashboard` | — |
+| WAHA API | `http://localhost:3002` | `http://waha:3000` |
+| PostgreSQL | tidak diekspos ke host | `db:5432` |
+
+Biarkan `.env.api.waha.local:WHATSAPP_ENABLED=false` sampai session WAHA
+`default` berstatus `WORKING`, engine aktual `WEBJS`, dan webhook session menuju
+`http://api:3000/whatsapp/webhook`. Setelah itu jalankan verifier read-only:
+
+```bash
+npm run whatsapp:local:verify
+```
+
+Verifier tidak memanggil `/api/sendText`. Verifier mengirim tepat satu event
+sintetis bertanda tangan: saat kill switch nonaktif respons harus `disabled`,
+dan setelah fitur diaktifkan respons harus `200 ignored`. Perbedaan antara nilai
+file env dan proses API dianggap gagal. Langkah QR, HMAC, pairing pengguna, dan
+uji pesan nyata dijelaskan lengkap di `WHATSAPP_WAHA_RUNBOOK.md`.
 
 ## Konfigurasi environment (`.env`)
 
@@ -58,6 +100,14 @@ environment platform (Render, Railway, VPS, dll.) untuk production:
 | `CORS_ORIGIN` | `http://localhost:3001` | URL frontend |
 | `API_PORT` | `3000` | Port API di host |
 | `TRUST_PROXY` | `1` pada Compose / `0` akses langsung | Jumlah reverse proxy di depan API; sesuaikan dengan jumlah hop Cloudflare/Nginx/load balancer |
+| `NEWS_STORAGE_DRIVER` | `local` | `local` untuk development; `r2` direkomendasikan untuk gambar News CMS di production |
+| `S3_ENDPOINT` / `S3_BUCKET` | kosong | Endpoint S3 API Cloudflare R2 dan nama bucket |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | kosong | Credential R2; simpan sebagai secret di platform |
+| `S3_PUBLIC_BASE_URL` | kosong | Custom domain atau URL publik bucket untuk menampilkan gambar |
+| `REKOMTEK_ANTIVIRUS_COMMAND` | `clamscan` pada image production | Executable scanner; production gagal startup jika kosong/tidak tersedia |
+| `REKOMTEK_ANTIVIRUS_ARGS` | `["--infected","--no-summary","{file}"]` | JSON array argumen scanner; `{file}` diganti path file privat |
+| `REKOMTEK_ANTIVIRUS_TIMEOUT_MS` | `120000` | Batas waktu scan per file |
+| `CLAMAV_FRESHCLAM_CHECKS` / `CLAMAV_FRESHCLAM_DAEMON` | `12` / `true` | Frekuensi pemeriksaan update signature per hari dan updater berkala |
 | `MAIL_HOST` / `MAIL_PORT` / `MAIL_USER` / `MAIL_PASS` | kosong | SMTP untuk email verifikasi (kosong = dev mode, email di-log) |
 | `APP_URL` | `http://localhost:3001` | URL web untuk link verifikasi |
 | `RECAPTCHA_SECRET_KEY` / `RECAPTCHA_SITE_KEY` | kosong | reCAPTCHA v2 (kosong = dilewati) |
@@ -80,6 +130,31 @@ Daftar lengkap: lihat `.env.docker.example`.
 Runbook provider dan rollback: `WHATSAPP_WAHA_RUNBOOK.md`.
 Template environment WAHA Coolify: `WAHA_COOLIFY_ENV.example`.
 Template webhook session WAHA: `WAHA_SESSION_WEBHOOK.example.json`.
+
+### News CMS dengan Cloudflare R2
+
+Gunakan konfigurasi berikut pada resource `sipengsui-api` di Coolify:
+
+```env
+NEWS_STORAGE_DRIVER=r2
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+S3_REGION=auto
+S3_BUCKET=<nama-bucket>
+S3_ACCESS_KEY_ID=<access-key>
+S3_SECRET_ACCESS_KEY=<secret-key>
+S3_PUBLIC_BASE_URL=https://<domain-publik-bucket>
+```
+
+`S3_ENDPOINT` adalah endpoint API S3 untuk upload, sedangkan
+`S3_PUBLIC_BASE_URL` adalah alamat yang dapat dibaca browser. Keduanya tidak
+selalu sama. Bucket atau custom domain harus mengizinkan pembacaan objek karena
+API mengembalikan URL publik gambar, bukan presigned URL.
+
+Saat `NEWS_STORAGE_DRIVER=r2`, API melakukan validasi konfigurasi tersebut pada
+startup dan tidak akan berjalan dengan endpoint, bucket, credential, atau URL
+publik yang kosong. Volume `/app/uploads` hanya diperlukan jika driver kembali
+ke `local`; volume `/app/storage` tetap diperlukan untuk berkas privat
+Rekomtek.
 
 ## WhatsApp WAHA/SumoPod MVP
 
@@ -148,6 +223,30 @@ WAHA_WEBHOOK_HMAC_KEY=
 WAHA_WEBHOOK_CUSTOM_SECRET=
 WAHA_EXPECTED_ENGINE=WEBJS
 ```
+
+Konfigurasi antivirus berikut juga hanya berada pada resource
+`sipengsui-api`:
+
+```env
+REKOMTEK_ANTIVIRUS_COMMAND=clamscan
+REKOMTEK_ANTIVIRUS_ARGS='["--infected","--no-summary","{file}"]'
+REKOMTEK_ANTIVIRUS_TIMEOUT_MS=120000
+CLAMAV_FRESHCLAM_CHECKS=12
+CLAMAV_FRESHCLAM_DAEMON=true
+```
+
+Tambahkan persistent storage Coolify untuk resource API:
+
+```text
+/app/uploads
+/app/storage
+/var/lib/clamav
+```
+
+`/var/lib/clamav` menyimpan database signature agar restart/deploy tetap dapat
+memindai ketika mirror update sementara tidak tersedia. Sediakan sedikitnya
+1 GB RAM untuk API; 2 GB direkomendasikan karena `clamscan` memuat database
+signature saat setiap pemeriksaan file.
 
 Nilai berikut adalah konfigurasi internal API dan tetap berada di resource
 `sipengsui-api`, bukan di resource `waha`:
@@ -283,6 +382,7 @@ Volume:
 - `sipengsui-api_db-data` — data PostgreSQL
 - `sipengsui-api_uploads-data` — file upload publik/legacy (`/app/uploads`: GIS maps, news, disaster reports)
 - `sipengsui-api_rekomtek-storage-data` — storage privat checklist Rekomtek (`/app/storage/rekomtek-berkas`)
+- `sipengsui-api_clamav-definitions` — database signature ClamAV (`/var/lib/clamav`)
 
 Update versi baru:
 
@@ -299,6 +399,7 @@ docker run --rm -p 3000:3000 \
   -e DATABASE_URL="postgresql://user:pass@host:5432/sipengsui?schema=public" \
   -e JWT_SECRET="ganti-dengan-secret-panjang" \
   -v sipengsui-uploads:/app/uploads \
+  -v sipengsui-clamav:/var/lib/clamav \
   sipengsui-api
 ```
 
@@ -310,7 +411,8 @@ docker run --rm -p 3000:3000 \
 | `env file ... not found` | Pastikan memakai `compose.yaml` (bukan yang mereferensikan `.env.docker`); file ini self-contained |
 | API restart terus (`db` belum siap) | Pastikan healthcheck db hijau: `docker compose ps` |
 | `PrismaClientInitializationError` (query engine) | Image production sudah include `openssl`; pastikan `DATABASE_URL` benar |
-| Upload checklist berstatus `Pending Check` | Konfigurasikan `REKOMTEK_ANTIVIRUS_COMMAND` dengan executable ClamAV/scanner dan pastikan volume `/app/storage` tersedia |
+| Upload checklist/artefak berstatus `Pending Check` | Konfigurasikan `REKOMTEK_ANTIVIRUS_COMMAND` dengan executable ClamAV/scanner. Jika scanner memerlukan argumen khusus, isi `REKOMTEK_ANTIVIRUS_ARGS` sebagai JSON array dan gunakan `{file}` untuk path file. Pastikan volume `/app/storage` tersedia |
+| Entrypoint berhenti karena database signature ClamAV tidak tersedia | Pastikan container dapat mengakses mirror ClamAV, persistent storage `/var/lib/clamav` dapat ditulis user `clamav`, lalu redeploy API. Sistem sengaja gagal tertutup daripada menerima file tanpa scan |
 | File privat checklist tidak ditemukan | Pastikan volume `rekomtek-storage-data` terpasang dan cek `docker compose exec api ls /app/storage/rekomtek-berkas` |
 | Upload 404 di `/uploads/...` | Pastikan file legacy tersimpan: `docker compose exec api ls /app/uploads`; static serve memakai `process.cwd()/uploads` |
 | Migration error "table already exists" | Database sudah pernah di-migrate; jangan `down -v` kecuali sengaja reset |

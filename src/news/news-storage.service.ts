@@ -11,6 +11,14 @@ import sharp from 'sharp';
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const SUPPORTED_STORAGE_DRIVERS = ['local', 's3', 'r2'] as const;
+
+type NewsStorageDriver = (typeof SUPPORTED_STORAGE_DRIVERS)[number];
+
+function readEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value || undefined;
+}
 
 export interface StoredNewsImage {
   key: string;
@@ -21,10 +29,51 @@ export interface StoredNewsImage {
 
 @Injectable()
 export class NewsStorageService {
-  private readonly driver = (
-    process.env.NEWS_STORAGE_DRIVER ?? 'local'
-  ).toLowerCase();
+  private readonly driver: NewsStorageDriver;
   private s3Client?: S3Client;
+
+  constructor() {
+    this.driver = this.resolveDriver();
+    this.validateConfiguration();
+  }
+
+  private resolveDriver(): NewsStorageDriver {
+    const value = (readEnv('NEWS_STORAGE_DRIVER') ?? 'local').toLowerCase();
+
+    if (!SUPPORTED_STORAGE_DRIVERS.includes(value as NewsStorageDriver)) {
+      throw new Error(
+        `NEWS_STORAGE_DRIVER tidak didukung: ${value}. Gunakan local, s3, atau r2.`,
+      );
+    }
+
+    return value as NewsStorageDriver;
+  }
+
+  private validateConfiguration(): void {
+    if (this.driver === 'local') return;
+
+    const required: Array<[string, string | undefined]> = [
+      ['S3_BUCKET', readEnv('S3_BUCKET')],
+      ['S3_ACCESS_KEY_ID', readEnv('S3_ACCESS_KEY_ID')],
+      ['S3_SECRET_ACCESS_KEY', readEnv('S3_SECRET_ACCESS_KEY')],
+      ['S3_PUBLIC_BASE_URL', readEnv('S3_PUBLIC_BASE_URL')],
+    ];
+
+    if (this.driver === 'r2') {
+      required.push(['S3_ENDPOINT', readEnv('S3_ENDPOINT')]);
+    }
+
+    const missing = required
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+
+    if (missing.length > 0) {
+      const provider = this.driver === 'r2' ? 'Cloudflare R2' : 'S3';
+      throw new Error(
+        `Konfigurasi ${provider} belum lengkap: ${missing.join(', ')}.`,
+      );
+    }
+  }
 
   async uploadImage(file: Express.Multer.File): Promise<StoredNewsImage> {
     if (!file?.buffer || !file.mimetype) {
@@ -72,7 +121,7 @@ export class NewsStorageService {
     await mkdir(join(process.cwd(), 'uploads', 'news'), { recursive: true });
     await writeFile(absolutePath, output);
 
-    const publicBase = process.env.NEWS_STORAGE_PUBLIC_URL?.replace(/\/$/, '');
+    const publicBase = readEnv('NEWS_STORAGE_PUBLIC_URL')?.replace(/\/$/, '');
     const url = publicBase ? `${publicBase}/uploads/${key}` : `/uploads/${key}`;
 
     return { key, url, contentType: 'image/webp', size: output.length };
@@ -82,18 +131,29 @@ export class NewsStorageService {
     key: string,
     output: Buffer,
   ): Promise<StoredNewsImage> {
-    const bucket = process.env.S3_BUCKET;
-    const region = process.env.S3_REGION ?? 'auto';
-    const endpoint = process.env.S3_ENDPOINT;
-    const accessKeyId = process.env.S3_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
-    const publicBase =
-      process.env.S3_PUBLIC_BASE_URL?.replace(/\/$/, '') ??
-      process.env.NEWS_STORAGE_PUBLIC_URL?.replace(/\/$/, '');
+    const bucket = readEnv('S3_BUCKET');
+    const region = readEnv('S3_REGION') ?? 'auto';
+    const endpoint = readEnv('S3_ENDPOINT');
+    const accessKeyId = readEnv('S3_ACCESS_KEY_ID');
+    const secretAccessKey = readEnv('S3_SECRET_ACCESS_KEY');
+    const publicBase = readEnv('S3_PUBLIC_BASE_URL')?.replace(/\/$/, '');
+    const missing = [
+      !bucket && 'S3_BUCKET',
+      !accessKeyId && 'S3_ACCESS_KEY_ID',
+      !secretAccessKey && 'S3_SECRET_ACCESS_KEY',
+      !publicBase && 'S3_PUBLIC_BASE_URL',
+      this.driver === 'r2' && !endpoint && 'S3_ENDPOINT',
+    ].filter(Boolean);
 
-    if (!bucket || !accessKeyId || !secretAccessKey || !publicBase) {
+    if (
+      missing.length > 0 ||
+      !bucket ||
+      !accessKeyId ||
+      !secretAccessKey ||
+      !publicBase
+    ) {
       throw new InternalServerErrorException(
-        'Storage S3/R2 belum dikonfigurasi lengkap. Isi S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, dan S3_PUBLIC_BASE_URL.',
+        `Storage ${this.driver.toUpperCase()} belum dikonfigurasi lengkap. Periksa: ${missing.join(', ')}.`,
       );
     }
 

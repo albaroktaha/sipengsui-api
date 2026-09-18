@@ -1,0 +1,25 @@
+{
+  "name": "default",
+  "config": {
+    "ignore": {
+      "status": true,
+      "groups": true,
+      "channels": true,
+      "broadcast": true
+    },
+    "webhooks": [
+      {
+        "url": "http://api:3000/whatsapp/webhook",
+        "events": ["message", "message.ack", "session.status"],
+        "hmac": {
+          "key": ""
+        },
+        "retries": {
+          "policy": "exponential",
+          "delaySeconds": 2,
+          "attempts": 15
+        }
+      }
+    ]
+  }
+}

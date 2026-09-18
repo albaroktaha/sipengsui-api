@@ -36,6 +36,181 @@ yang berbeda dan tidak boleh dicampur:
 SIPENGSUI hanya membutuhkan URL/API key/session/engine expected serta secret
 HMAC pada environment API-nya.
 
+## Full local: PostgreSQL + WAHA + SIPENGSUI API
+
+Gunakan stack lokal terpisah dari konfigurasi Coolify/production:
+
+- `compose.waha.local.yaml` menjalankan `db`, `waha`, dan `api` dalam satu
+  network Compose;
+- `.env.waha.local.example` adalah template khusus container WAHA;
+- `.env.api.waha.local.example` adalah template khusus SIPENGSUI API;
+- `WAHA_SESSION_WEBHOOK.local.example.json` adalah template konfigurasi session
+  WAHA lokal;
+- `scripts/verify-whatsapp-local.mjs` menjalankan probe read-only terhadap health
+  WAHA, route webhook, dan HMAC sintetis tanpa memanggil `/api/sendText`.
+
+Pemetaan alamat full-local:
+
+| Arah | URL |
+|---|---|
+| Browser/operator ke Dashboard WAHA | `http://localhost:3002/dashboard` |
+| Browser/frontend ke SIPENGSUI API | `http://localhost:3000` |
+| SIPENGSUI API container ke WAHA | `http://waha:3000` |
+| WAHA container ke webhook API | `http://api:3000/whatsapp/webhook` |
+| Frontend lokal | `http://localhost:3001` |
+
+Jangan memakai `localhost` untuk komunikasi antar-container: di dalam container,
+`localhost` berarti container itu sendiri. Jangan memakai database atau session
+production untuk pengujian lokal.
+
+### Menyiapkan environment lokal
+
+Dari direktori `sipengsui-api`:
+
+```bash
+cp .env.api.waha.local.example .env.api.waha.local
+cp .env.waha.local.example .env.waha.local
+```
+
+Isi nilai rahasia hanya pada dua file yang di-ignore tersebut:
+
+1. Isi `JWT_SECRET` lokal khusus untuk API; jangan menyalin secret production.
+2. Buat API key WAHA lokal dan isi nilai yang sama pada:
+   - `.env.waha.local:WAHA_API_KEY`
+   - `.env.api.waha.local:WAHA_API_KEY`
+3. Buat HMAC key lain yang berbeda dari API key, lalu isi:
+   - `.env.api.waha.local:WAHA_WEBHOOK_HMAC_KEY`
+   - field `hmac.key` pada webhook session WAHA lokal
+4. Buat password Dashboard WAHA dan isi hanya di `.env.waha.local`.
+5. Pertahankan `WHATSAPP_ENABLED=false` selama setup awal.
+
+Jalankan preflight terlebih dahulu. Pemeriksaan ini hanya menampilkan status
+konfigurasi, bukan nilai secret:
+
+```bash
+npm run whatsapp:local:preflight
+```
+
+Preflight menolak file yang hilang, JWT secret yang kosong, API key yang
+berbeda antara service, HMAC yang sama dengan API key, custom-secret yang masih
+aktif, URL internal yang salah, engine mismatch, serta Dashboard yang nonaktif
+atau tidak memiliki username/password lengkap.
+
+Validasi kontrak Compose tanpa menjalankan container:
+
+```bash
+npm run whatsapp:local:config
+```
+
+Output service harus mencakup `db`, `waha`, dan `api`. Kemudian nyalakan Docker
+Desktop dan jalankan:
+
+```bash
+npm run whatsapp:local:up
+```
+
+Untuk volume database lokal yang baru, jalankan seed development satu kali agar
+akun, role, permission, dan data dasar tersedia:
+
+```bash
+npm run whatsapp:local:seed
+```
+
+Jangan jalankan seed development terhadap database non-lokal atau database yang
+berisi data penting; mode tersebut dapat mereset data pengembangan. `tsx`
+tersedia sebagai runtime dependency agar `prisma db seed` dapat berjalan di
+image API production-style yang dipakai Compose lokal.
+
+`compose.waha.local.yaml` memakai volume terpisah untuk database, session WAHA,
+media WAHA, upload API, dan storage Rekomtek. Default amd64/Windows x64 dipin
+ke `devlikeapro/waha:chrome-2026.8.1`, versi WEBJS yang menyediakan endpoint
+session, timelock, dan capping yang diwajibkan verifier. `npm run
+whatsapp:local:up` menarik image tersebut bila belum tersedia. Pada host ARM,
+pilih tag ARM versi yang sama secara eksplisit:
+
+```bash
+WAHA_LOCAL_IMAGE=devlikeapro/waha:arm-2026.8.1 npm run whatsapp:local:up
+```
+
+Healthcheck Compose memanggil `GET /health` dengan `X-Api-Key`, bukan hanya
+memeriksa port TCP. Jangan mengganti pin versi sebelum OpenAPI, response health,
+engine, dan fixture webhook versi baru diverifikasi.
+
+### Pairing provider dan webhook lokal
+
+1. Buka `http://localhost:3002/dashboard` dan login ke Dashboard WAHA.
+2. Buat/start session `default` dengan engine `WEBJS`.
+3. Scan QR memakai **nomor layanan khusus**, bukan nomor pengguna penguji.
+4. Konfigurasikan webhook session memakai nilai dari
+   `WAHA_SESSION_WEBHOOK.local.example.json`:
+   - URL `http://api:3000/whatsapp/webhook`;
+   - event `message`, `message.ack`, dan `session.status`;
+   - HMAC key yang sama dengan `WAHA_WEBHOOK_HMAC_KEY` milik API;
+   - retry exponential, delay 2 detik, maksimal 15 percobaan.
+5. Setelah menyimpan konfigurasi, tunggu session kembali berstatus `WORKING`.
+
+Pairing QR di atas hanya menghubungkan nomor layanan ke WAHA. Pairing code dari
+Profil SIPENGSUI adalah alur berbeda: nomor pengguna mengirim `PAIR <code>` ke
+nomor layanan.
+
+### Verifikasi aman sebelum aktivasi
+
+Dengan API dan WAHA hidup tetapi `WHATSAPP_ENABLED=false`, jalankan:
+
+```bash
+npm run whatsapp:local:verify
+```
+
+Verifier membaca `.env.api.waha.local`, memeriksa tiga endpoint berikut dengan
+`X-Api-Key`, dan tidak pernah mengirim pesan:
+
+```text
+GET /api/sessions/default
+GET /api/sessions/default/timelock
+GET /api/sessions/default/capping
+```
+
+Verifier hanya mengizinkan tujuan loopback HTTP pada port WAHA `3002` dan API
+`3000`. Override yang menunjuk host remote, path tambahan, credential URL, atau
+port lain ditolak sebelum API key maupun HMAC dikirim.
+
+Hasil awal yang diharapkan:
+
+- `provider.ready=true`;
+- engine `WEBJS` dan status `WORKING`;
+- route API `DISABLED_READY`;
+- `messageSent=false`;
+- probe bertanda tangan mengonfirmasi bahwa proses API masih disabled, tanpa
+  memproses event.
+
+Setelah hasil tersebut lulus, ubah hanya
+`.env.api.waha.local:WHATSAPP_ENABLED=true`, lalu recreate API:
+
+```bash
+docker compose -f compose.waha.local.yaml up -d --force-recreate api
+npm run whatsapp:local:verify
+```
+
+Pada mode aktif, verifier mengirim tepat satu event sintetis `local.probe`
+dengan HMAC SHA-512. Event itu wajib menghasilkan `200 ignored`; jika file env
+menyatakan aktif tetapi proses API masih disabled (atau sebaliknya), verifier
+gagal dengan `SIPENGSUI_KILL_SWITCH_MISMATCH`. Event tidak disimpan sebagai
+pesan dan tidak memicu router, outbox, workflow, atau `/api/sendText`.
+
+Sesudah verifier lulus, gunakan nomor penguji terpisah untuk mengirim `MENU` ke
+nomor layanan. Baru setelah inbound dan balasan nyata berhasil, lanjutkan uji
+pairing pengguna, consent, `STATUS`, dan notifikasi workflow.
+
+Log dan penghentian stack:
+
+```bash
+npm run whatsapp:local:logs
+npm run whatsapp:local:down
+```
+
+`down` mempertahankan volume. Jangan menambahkan `-v` kecuali memang ingin
+menghapus database serta session QR lokal dan melakukan pairing ulang.
+
 ## Setup operator SumoPod
 
 1. Buat satu session khusus layanan di SumoPod.

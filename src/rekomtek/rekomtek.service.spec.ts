@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unnecessary-type-assertion */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { RekomtekStatus } from '@prisma/client';
 import { RekomtekService } from './rekomtek.service';
 
@@ -94,6 +94,22 @@ describe('RekomtekService', () => {
         permissions: ['rekomtek.read'],
       }),
     ).resolves.toEqual(rekomtek);
+  });
+
+  it('blocks a PETUGAS-only account from creating a recommendation', async () => {
+    await expect(
+      service.create(
+        { nomor: 'REK-TEST-001' } as never,
+        {
+          userId: 'petugas-1',
+          role: 'PETUGAS',
+          roles: ['PETUGAS'],
+          permissions: ['rekomtek.create'],
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(prisma.rekomtek.findUnique).not.toHaveBeenCalled();
   });
 
   it('allows a returned recommendation to be submitted again after its links are fixed', async () => {

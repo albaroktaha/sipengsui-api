@@ -65,17 +65,43 @@ export class WhatsAppMessageRegistry {
     const venue = this.limit(context.venue?.trim() || '—', 240);
     const agenda = this.limit(context.agenda, 300);
     const invitation = this.limit(context.invitationNumber, 120);
-    const number = this.limit(context.applicationNumber, 120);
+    const companyName = this.limit(context.companyName, 200);
     const url = this.limit(context.applicationUrl, 500);
     switch (key) {
       case 'EXPOSE_INVITATION':
-        return `Undangan Ekspose ${invitation} untuk Permohonan Rekomtek ${number}. Waktu: ${date}, ${time}. Metode: ${method}. Tempat: ${venue}. Agenda: ${agenda}. Buka detail undangan di SIPENGSUI: ${url}`;
+        return [
+          `Undangan Ekspose ${invitation} untuk Permohonan Rekomtek ${companyName},`,
+          `Waktu: ${date}, ${time}`,
+          `Metode: ${method}`,
+          `Tempat: ${venue}`,
+          `Agenda: ${agenda}`,
+          `Buka detail undangan di SIPENGSUI: ${url}`,
+        ].join('\n');
       case 'EXPOSE_RESCHEDULED':
-        return `Jadwal Ekspose untuk Permohonan Rekomtek ${number} telah diperbarui. Jadwal baru: ${date}, ${time}. Metode: ${method}. Tempat: ${venue}. Agenda: ${agenda}. Buka SIPENGSUI: ${url}`;
+        return [
+          `Jadwal Ekspose untuk Permohonan Rekomtek ${companyName} telah diperbarui.`,
+          `Waktu: ${date}, ${time}`,
+          `Metode: ${method}`,
+          `Tempat: ${venue}`,
+          `Agenda: ${agenda}`,
+          `Buka detail undangan di SIPENGSUI: ${url}`,
+        ].join('\n');
       case 'EXPOSE_CANCELLED':
-        return `Jadwal Ekspose untuk Permohonan Rekomtek ${number} telah dibatalkan. Silakan buka SIPENGSUI untuk informasi terbaru: ${url}`;
+        return [
+          `Jadwal Ekspose untuk Permohonan Rekomtek ${companyName} telah dibatalkan.`,
+          ...(context.cancellationReason?.trim()
+            ? [`Alasan: ${this.limit(context.cancellationReason, 300)}`]
+            : []),
+          `Buka detail undangan di SIPENGSUI: ${url}`,
+        ].join('\n');
       case 'EXPOSE_REMINDER':
-        return `Pengingat: Ekspose Permohonan Rekomtek ${number} berlangsung ${date}, ${time}. Metode: ${method}. Tempat: ${venue}. Buka detail: ${url}`;
+        return [
+          `Pengingat: Ekspose Permohonan Rekomtek ${companyName}`,
+          `Waktu: ${date}, ${time}`,
+          `Metode: ${method}`,
+          `Tempat: ${venue}`,
+          `Buka detail undangan di SIPENGSUI: ${url}`,
+        ].join('\n');
       default:
         return null;
     }

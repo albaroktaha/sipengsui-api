@@ -9,6 +9,7 @@ import {
   MinLength,
 } from 'class-validator';
 
+const jenisOptions = ['APU', 'PLTA', 'PLTM', 'GALIAN_C'] as const;
 const jenisPermohonanOptions = ['IZIN_BARU', 'PERPANJANGAN'] as const;
 
 export class CreateRekomtekDto {
@@ -33,18 +34,10 @@ export class CreateRekomtekDto {
   @ApiProperty({
     description: 'Jenis rekomendasi teknis',
     example: 'APU',
+    enum: [...jenisOptions],
   })
   @IsString()
-  @IsIn([
-    'APU',
-    'PLTA',
-    'PLTM',
-    'GALIAN_C',
-    'AMDES',
-    'IRIGASI',
-    'AIR_BERSIH',
-    'OTHER',
-  ])
+  @IsIn(jenisOptions)
   jenis!: string;
 
   @ApiPropertyOptional({

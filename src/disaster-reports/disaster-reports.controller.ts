@@ -36,6 +36,8 @@ export class DisasterReportsController {
   ) {}
 
   @Post()
+  @UseGuards(PermissionsGuard)
+  @Permissions('disaster-reports.create')
   @ApiOperation({ summary: 'Buat laporan bencana baru' })
   create(@Body() dto: CreateDisasterReportDto, @Req() req: AuthRequest) {
     return this.disasterReportsService.create({
@@ -71,6 +73,8 @@ export class DisasterReportsController {
   }
 
   @Patch(':id/submit')
+  @UseGuards(PermissionsGuard)
+  @Permissions('disaster-reports.create')
   @ApiOperation({ summary: 'Kirim laporan bencana (DRAFT → SUBMITTED)' })
   submit(@Param('id') id: string) {
     return this.disasterReportsService.submit(id);

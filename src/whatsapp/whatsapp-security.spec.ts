@@ -11,6 +11,7 @@ import {
   normalizeWahaChatId,
   normalizeWhatsAppPhone,
   phoneFromWahaChatId,
+  resolveWahaMessageIdentity,
   verifyWahaSignature,
 } from './whatsapp-security';
 import { WhatsAppMessageRegistry } from './whatsapp-message.registry';
@@ -66,6 +67,26 @@ describe('WhatsApp security primitives', () => {
     expect(phoneFromWahaChatId('6281234567890@c.us')).toBe('+6281234567890');
     expect(phoneFromWahaChatId('123@g.us')).toBeNull();
     expect(phoneFromWahaChatId('status@broadcast')).toBeNull();
+  });
+
+  it('resolves a WEBJS @lid sender through SenderAlt without trusting the LID as a phone', () => {
+    expect(phoneFromWahaChatId('6281234567890@s.whatsapp.net')).toBe(
+      '+6281234567890',
+    );
+    expect(
+      resolveWahaMessageIdentity({
+        from: '177433789616307@lid',
+        _data: {
+          Info: { SenderAlt: '6281234567890@s.whatsapp.net' },
+        },
+      }),
+    ).toEqual({
+      phoneE164: '+6281234567890',
+      providerWaId: '6281234567890',
+    });
+    expect(
+      resolveWahaMessageIdentity({ from: '177433789616307@lid' }),
+    ).toBeNull();
   });
 
   it('hashes pairing codes after case normalization', () => {

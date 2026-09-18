@@ -18,6 +18,14 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "whatsapp:local:test": "node --test scripts/verify-whatsapp-local.test.mjs",
+    "whatsapp:local:config": "docker compose -f compose.waha.local.yaml config --services",
+    "whatsapp:local:preflight": "node scripts/verify-whatsapp-local.mjs --preflight",
+    "whatsapp:local:up": "npm run whatsapp:local:config && npm run whatsapp:local:preflight && docker compose -f compose.waha.local.yaml up -d --build --pull missing",
+    "whatsapp:local:down": "docker compose -f compose.waha.local.yaml down",
+    "whatsapp:local:logs": "docker compose -f compose.waha.local.yaml logs -f api waha",
+    "whatsapp:local:seed": "docker compose -f compose.waha.local.yaml exec api npx prisma db seed",
+    "whatsapp:local:verify": "node scripts/verify-whatsapp-local.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts"
@@ -62,6 +70,7 @@
     "sanitize-html": "^2.13.0",
     "sharp": "^0.35.3",
     "swagger-ui-express": "^5.0.1",
+    "tsx": "^4.23.13",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
@@ -96,7 +105,6 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "tsx": "^4.22.4",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
   },

@@ -1,0 +1,78 @@
+name: sipengsui-whatsapp-local
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sipengsui_local
+      POSTGRES_PASSWORD: sipengsui_local
+      POSTGRES_DB: sipengsui_local
+    volumes:
+      - local-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sipengsui_local -d sipengsui_local']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  waha:
+    image: ${WAHA_LOCAL_IMAGE:-devlikeapro/waha:chrome-2026.8.1}
+    pull_policy: missing
+    restart: unless-stopped
+    env_file:
+      - path: .env.waha.local
+        required: false
+    ports:
+      - '127.0.0.1:3002:3000'
+    volumes:
+      - local-waha-sessions:/app/.sessions
+      - local-waha-media:/app/.media
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --show-error --max-time 5 -H "X-Api-Key: $${WAHA_API_KEY}" http://127.0.0.1:3000/health > /dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: '20m'
+        max-file: '3'
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env.api.waha.local
+        required: false
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://sipengsui_local:sipengsui_local@db:5432/sipengsui_local?schema=public
+      CORS_ORIGIN: http://localhost:3001
+      TRUST_PROXY: 0
+      APP_URL: http://localhost:3001
+      WAHA_BASE_URL: http://waha:3000
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - local-uploads:/app/uploads
+      - local-rekomtek-storage:/app/storage
+      - local-clamav-definitions:/var/lib/clamav
+    depends_on:
+      db:
+        condition: service_healthy
+      waha:
+        condition: service_healthy
+
+volumes:
+  local-db-data:
+  local-waha-sessions:
+  local-waha-media:
+  local-uploads:
+  local-rekomtek-storage:
+  local-clamav-definitions:

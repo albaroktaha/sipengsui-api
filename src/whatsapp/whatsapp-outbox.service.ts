@@ -7,6 +7,7 @@ import {
   WhatsAppConsentPurpose,
   WhatsAppIdentityStatus,
   WhatsAppOutboxStatus,
+  WhatsAppRecipientType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppConfig } from './whatsapp.config';
@@ -212,6 +213,39 @@ export class WhatsAppOutboxService {
     });
   }
 
+  async enqueueExposeRescheduled(
+    db: DbClient,
+    input: { scheduleId: string; eventId: string },
+  ): Promise<number> {
+    const schedule = await this.findExposeSchedule(db, input.scheduleId);
+    if (!schedule || schedule.status !== RekomtekExposeStatus.TERJADWAL) {
+      return 0;
+    }
+    return this.enqueueExposeMessage(db, schedule, {
+      messageKey: 'EXPOSE_RESCHEDULED',
+      domainEventId: input.eventId,
+      workflowEventId: input.eventId,
+      dedupeSuffix: 'EXPOSE_RESCHEDULED',
+    });
+  }
+
+  async enqueueExposeCancelled(
+    db: DbClient,
+    input: { scheduleId: string; eventId: string },
+  ): Promise<number> {
+    const schedule = await this.findExposeSchedule(db, input.scheduleId);
+    if (!schedule || schedule.status !== RekomtekExposeStatus.DIBATALKAN) {
+      return 0;
+    }
+    return this.enqueueExposeMessage(db, schedule, {
+      messageKey: 'EXPOSE_CANCELLED',
+      domainEventId: input.eventId,
+      workflowEventId: input.eventId,
+      dedupeSuffix: 'EXPOSE_CANCELLED',
+      allowedStatuses: [RekomtekExposeStatus.DIBATALKAN],
+    });
+  }
+
   async enqueueExposeReminders(): Promise<number> {
     if (!this.config.enabled || !this.config.exposeRemindersEnabled) {
       return 0;
@@ -240,7 +274,14 @@ export class WhatsAppOutboxService {
         responsibleUserId: true,
         scheduleVersion: true,
         status: true,
-        rekomtek: { select: { nomor: true } },
+        cancellationReason: true,
+        rekomtek: {
+          select: {
+            createdBy: true,
+            createdByUser: { select: { organization: true } },
+            nomor: true,
+          },
+        },
       },
       take: 100,
     });
@@ -449,7 +490,14 @@ export class WhatsAppOutboxService {
         responsibleUserId: true,
         scheduleVersion: true,
         status: true,
-        rekomtek: { select: { nomor: true } },
+        cancellationReason: true,
+        rekomtek: {
+          select: {
+            createdBy: true,
+            createdByUser: { select: { organization: true } },
+            nomor: true,
+          },
+        },
       },
     });
   }
@@ -463,12 +511,16 @@ export class WhatsAppOutboxService {
       domainEventVersion?: number;
       workflowEventId?: string;
       dedupeSuffix: string;
+      allowedStatuses?: readonly RekomtekExposeStatus[];
     },
   ): Promise<number> {
+    const allowedStatuses = input.allowedStatuses ?? [
+      RekomtekExposeStatus.TERJADWAL,
+    ];
     if (
       !this.config.enabled ||
       !schedule ||
-      schedule.status !== RekomtekExposeStatus.TERJADWAL
+      !allowedStatuses.includes(schedule.status)
     ) {
       return 0;
     }
@@ -522,40 +574,69 @@ export class WhatsAppOutboxService {
         ]),
       ).values(),
     ];
-    if (identities.length === 0) return 0;
+    if (identities.length === 0 && !this.config.exposeGroupChatId) return 0;
 
     const context: WhatsAppExposeMessageContext = {
       invitationNumber: schedule.invitationNumber ?? 'Undangan Ekspose',
-      applicationNumber: schedule.rekomtek.nomor,
+      companyName:
+        schedule.rekomtek.createdByUser?.organization?.trim() ||
+        schedule.rekomtek.createdBy,
       startsAt: schedule.startsAt,
       endsAt: schedule.endsAt,
       timeZone: schedule.timeZone,
       method: schedule.method,
       venue: schedule.venue,
       agenda: schedule.agenda,
+      cancellationReason: schedule.cancellationReason,
       applicationUrl: `${this.config.appUrl}/dashboard/rekomtek/${schedule.rekomtekId}?schedule=${schedule.id}`,
     };
     const message = this.registry.resolve(input.messageKey, context);
     if (!message) return 0;
 
-    const data = identities.map((identity) => ({
-      recipientIdentityId: identity.id,
-      provider: 'waha',
-      purpose: WhatsAppConsentPurpose.REKOMTEK_TRANSACTIONAL,
-      messageKey: message.messageKey,
-      messageVersion: message.messageVersion,
-      language: message.language,
-      textBody: message.text,
-      textSnapshotHash: this.hashText(message.text),
-      dedupeKey: `${schedule.id}:${schedule.scheduleVersion}:${identity.id}:${input.dedupeSuffix}:${message.messageVersion}`,
-      domainEventId: input.domainEventId,
-      domainEventVersion: input.domainEventVersion,
-      workflowEventId: input.workflowEventId,
-      scheduleId: schedule.id,
-      scheduleVersion: schedule.scheduleVersion,
-      status: WhatsAppOutboxStatus.PENDING,
-      maxAttempts: this.config.maxAttempts,
-    }));
+    const data: Prisma.WhatsAppOutboxCreateManyInput[] = identities.map(
+      (identity) => ({
+        recipientIdentityId: identity.id,
+        recipientType: WhatsAppRecipientType.DIRECT,
+        provider: 'waha',
+        purpose: WhatsAppConsentPurpose.REKOMTEK_TRANSACTIONAL,
+        messageKey: message.messageKey,
+        messageVersion: message.messageVersion,
+        language: message.language,
+        textBody: message.text,
+        textSnapshotHash: this.hashText(message.text),
+        dedupeKey: `${schedule.id}:${schedule.scheduleVersion}:${identity.id}:${input.dedupeSuffix}:${message.messageVersion}`,
+        domainEventId: input.domainEventId,
+        domainEventVersion: input.domainEventVersion,
+        workflowEventId: input.workflowEventId,
+        scheduleId: schedule.id,
+        scheduleVersion: schedule.scheduleVersion,
+        status: WhatsAppOutboxStatus.PENDING,
+        maxAttempts: this.config.maxAttempts,
+      }),
+    );
+    if (this.config.exposeGroupChatId) {
+      data.push({
+        recipientIdentityId: null,
+        recipientChatId: this.config.exposeGroupChatId,
+        recipientType: WhatsAppRecipientType.GROUP,
+        provider: 'waha',
+        purpose: WhatsAppConsentPurpose.REKOMTEK_TRANSACTIONAL,
+        consentRequired: false,
+        messageKey: message.messageKey,
+        messageVersion: message.messageVersion,
+        language: message.language,
+        textBody: message.text,
+        textSnapshotHash: this.hashText(message.text),
+        dedupeKey: `${schedule.id}:${schedule.scheduleVersion}:GROUP:${this.config.exposeGroupChatId}:${input.dedupeSuffix}:${message.messageVersion}`,
+        domainEventId: input.domainEventId,
+        domainEventVersion: input.domainEventVersion,
+        workflowEventId: input.workflowEventId,
+        scheduleId: schedule.id,
+        scheduleVersion: schedule.scheduleVersion,
+        status: WhatsAppOutboxStatus.PENDING,
+        maxAttempts: this.config.maxAttempts,
+      });
+    }
     const result = await db.whatsAppOutbox.createMany({
       data,
       skipDuplicates: true,

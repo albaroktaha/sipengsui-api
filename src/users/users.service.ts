@@ -14,6 +14,7 @@ import {
   WhatsAppPairingStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PETUGAS_WORKFLOW_PERMISSION_SLUGS } from '../rekomtek/rekomtek-permission-policy';
 
 const ROLE_PERMISSION_GRANTS: Partial<Record<RoleType, readonly string[]>> = {
   [RoleType.USER]: ['rekomtek.correct.initial', 'rekomtek.correct.post-expose'],
@@ -24,21 +25,23 @@ const ROLE_PERMISSION_GRANTS: Partial<Record<RoleType, readonly string[]>> = {
     'rekomtek.expose',
     'rekomtek.field',
     'rekomtek.artifact',
+    'rekomtek.inspect',
+    'rekomtek.publish.final',
   ],
   [RoleType.PETUGAS]: [
-    'rekomtek.read',
-    'rekomtek.berkas',
-    'rekomtek.evaluate',
-    'rekomtek.workflow.read',
-    'rekomtek.expose',
-    'rekomtek.field',
-    'rekomtek.artifact',
+    ...PETUGAS_WORKFLOW_PERMISSION_SLUGS,
     'rekomtek.update',
     'rekomtek.delete',
   ],
 };
 
-const PETUGAS_RESTRICTED_PERMISSION_SLUGS = ['rekomtek.submit'] as const;
+const PETUGAS_RESTRICTED_PERMISSION_SLUGS = [
+  'rekomtek.create',
+  'rekomtek.submit',
+  'rekomtek.correct.initial',
+  'rekomtek.correct.post-expose',
+  'disaster-reports.create',
+] as const;
 
 const PRIVILEGED_ROLE_NAMES = ['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'] as const;
 

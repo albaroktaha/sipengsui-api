@@ -16,6 +16,7 @@ import {
   parseWahaTimestamp,
   parseWahaWebhookTimestamp,
   phoneFromWahaChatId,
+  resolveWahaMessageIdentity,
   secureStringEqual,
   verifyWahaSignature,
 } from './whatsapp-security';
@@ -200,8 +201,25 @@ export class WhatsAppWebhookService {
     ) {
       return this.ignored();
     }
-    const phoneE164 = phoneFromWahaChatId(from, this.config.defaultCountryCode);
-    if (!phoneE164) return this.ignored();
+    let phoneIdentity = resolveWahaMessageIdentity(
+      providerPayload,
+      this.config.defaultCountryCode,
+    );
+    if (!phoneIdentity && from.endsWith('@lid')) {
+      try {
+        const phoneE164 = await this.provider.resolveLidPhone(from);
+        if (phoneE164) {
+          phoneIdentity = {
+            phoneE164,
+            providerWaId: phoneE164.slice(1),
+          };
+        }
+      } catch {
+        // A LID resolution failure must not trust the LID as a phone number.
+        // The event is safely ignored and WAHA may retry according to policy.
+      }
+    }
+    if (!phoneIdentity) return this.ignored();
 
     const existing = await this.prisma.whatsAppInboundEvent.findUnique({
       where: { providerRequestId: requestId },
@@ -213,8 +231,8 @@ export class WhatsAppWebhookService {
     }
 
     const identity = await this.identities.getOrCreateIdentity(
-      phoneE164,
-      from.slice(0, -5),
+      phoneIdentity.phoneE164,
+      phoneIdentity.providerWaId,
     );
     const messageType = this.mapMessageType(providerPayload);
     const text = this.stringValue(providerPayload.body);

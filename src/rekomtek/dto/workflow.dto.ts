@@ -222,6 +222,34 @@ export class ScheduleExposeDto {
   invitationArtifactId!: string;
 }
 
+export class RescheduleExposeDto {
+  @ApiProperty({ description: 'Waktu mulai Ekspose yang baru' })
+  @IsDateString()
+  startsAt!: string;
+
+  @ApiProperty({ description: 'Waktu selesai Ekspose yang baru' })
+  @IsDateString()
+  endsAt!: string;
+
+  @ApiProperty({ description: 'ID artefak undangan Ekspose final versi baru' })
+  @IsUUID()
+  invitationArtifactId!: string;
+
+  @ApiPropertyOptional({ description: 'Alasan perubahan jadwal' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  reason?: string;
+}
+
+export class CancelExposeDto {
+  @ApiProperty({ description: 'Alasan pembatalan jadwal Ekspose' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  reason!: string;
+}
+
 export class CompleteExposeDto {
   @ApiProperty({ description: 'Waktu mulai realisasi Ekspose' })
   @IsDateString()

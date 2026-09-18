@@ -23,7 +23,27 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+SIPENGSUI API adalah backend NestJS untuk layanan SIPENGSUI, termasuk integrasi
+WhatsApp melalui WAHA. WAHA menggunakan sesi WhatsApp Web dan bukan API resmi
+Meta; gunakan nomor layanan khusus dan lingkungan uji terisolasi.
+
+### WhatsApp full-local
+
+Repo menyediakan stack lokal `PostgreSQL + WAHA + SIPENGSUI API` melalui
+`compose.waha.local.yaml`. Mulai dengan:
+
+```bash
+cp .env.api.waha.local.example .env.api.waha.local
+cp .env.waha.local.example .env.waha.local
+# Isi secret hanya pada dua file lokal tersebut.
+npm run whatsapp:local:preflight
+npm run whatsapp:local:config
+npm run whatsapp:local:up
+```
+
+Pertahankan `WHATSAPP_ENABLED=false` sampai session WAHA `WORKING`, webhook/HMAC
+selesai dikonfigurasi, dan `npm run whatsapp:local:verify` lulus. Lihat
+`WHATSAPP_WAHA_RUNBOOK.md` untuk urutan aman lengkap dan pemetaan port.
 
 ## Project setup
 

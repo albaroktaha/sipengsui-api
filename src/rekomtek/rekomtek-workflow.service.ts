@@ -34,6 +34,7 @@ import { WhatsAppConfig } from '../whatsapp/whatsapp.config';
 import { normalizeWhatsAppPhone } from '../whatsapp/whatsapp-security';
 import {
   AssignRekomtekTeamDto,
+  CancelExposeDto,
   CompleteExposeDto,
   CompleteFieldVisitDto,
   CompletePostExposeCorrectionDto,
@@ -46,6 +47,7 @@ import {
   IssueFieldVisitDto,
   OfficialReviewDto,
   ResolveWorkflowMigrationDto,
+  RescheduleExposeDto,
   ScheduleExposeDto,
   SubmitCorrectionDto,
   SuperiorApprovalDto,
@@ -195,22 +197,78 @@ export class RekomtekWorkflowService {
       where: { id },
       include: detailInclude,
     });
+    if (!detail) return detail;
+
+    const teamAssignments = detail.teamAssignments ?? [];
+    const memberUserIds = [
+      ...new Set(
+        teamAssignments.flatMap((assignment) =>
+          assignment.members.map((member) => member.userId),
+        ),
+      ),
+    ];
+    const memberUsers =
+      memberUserIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: memberUserIds } },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              role: { select: { name: true } },
+              userRoles: { select: { role: { select: { name: true } } } },
+            },
+          })
+        : [];
+    const memberUserLabels = new Map(
+      memberUsers.map((memberUser) => {
+        const roles = [
+          memberUser.role?.name,
+          ...memberUser.userRoles.map(({ role }) => role.name),
+        ].filter(Boolean);
+        const displayName = [memberUser.firstName, memberUser.lastName]
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .join(' ');
+        const roleName =
+          roles.find((role) => role !== 'USER') ?? roles[0] ?? null;
+        return [
+          memberUser.id,
+          {
+            displayName: displayName || 'Nama pengguna tidak tersedia',
+            roleName,
+          },
+        ] as const;
+      }),
+    );
+    const detailWithMemberLabels = {
+      ...detail,
+      teamAssignments: teamAssignments.map((assignment) => ({
+        ...assignment,
+        members: assignment.members.map((member) => ({
+          ...member,
+          user: memberUserLabels.get(member.userId) ?? null,
+        })),
+      })),
+    };
     if (
-      detail &&
       current.createdById === user.userId &&
       !this.hasRole(user, 'PETUGAS', 'PIMPINAN', 'ADMIN', 'SUPER_ADMIN')
     ) {
       return {
-        ...detail,
-        artifacts: detail.artifacts.filter(
+        ...detailWithMemberLabels,
+        artifacts: detailWithMemberLabels.artifacts.filter(
           (artifact) =>
             APPLICANT_OUTPUT_ARTIFACT_TYPES.includes(artifact.type) &&
             artifact.status === RekomtekArtifactStatus.FINAL &&
-            artifact.technicalStatus === BerkasTechnicalStatus.VALID,
+            artifact.technicalStatus === BerkasTechnicalStatus.VALID &&
+            (artifact.type !== RekomtekArtifactType.DOKUMEN_REKOMTEK ||
+              current.workflowStage ===
+                RekomtekWorkflowStage.DOKUMEN_REKOMTEK_TERBIT),
         ),
       };
     }
-    return detail;
+    return detailWithMemberLabels;
   }
 
   async resolveWorkflowMigration(
@@ -963,6 +1021,14 @@ export class RekomtekWorkflowService {
       },
     });
     if (!artifact) throw new NotFoundException('Artefak final tidak ditemukan');
+    if (
+      artifact.type === RekomtekArtifactType.DOKUMEN_REKOMTEK &&
+      current.workflowStage !== RekomtekWorkflowStage.DOKUMEN_REKOMTEK_TERBIT
+    ) {
+      throw new NotFoundException(
+        'Dokumen Rekomtek belum diterbitkan untuk Pemohon',
+      );
+    }
     if (artifact.type === RekomtekArtifactType.UNDANGAN_EKSPOSE) {
       await this.assertExposeInvitationAccess(id, artifact.id, current, user);
     } else {
@@ -1218,6 +1284,165 @@ export class RekomtekWorkflowService {
       throw error;
     }
     return { ...schedule, warnings };
+  }
+
+  async rescheduleExpose(
+    id: string,
+    scheduleId: string,
+    dto: RescheduleExposeDto,
+    user: AuthenticatedUser,
+  ) {
+    this.assertPermission(user, 'rekomtek.expose');
+    this.assertRole(user, 'PIMPINAN', 'SUPER_ADMIN', 'ADMIN');
+    const current = await this.loadRecord(id);
+    this.assertStage(current, RekomtekWorkflowStage.EKSPOSE_TERJADWAL);
+    const startsAt = new Date(dto.startsAt);
+    const endsAt = new Date(dto.endsAt);
+    this.assertEndAfterStart(startsAt, endsAt, 'Jadwal Ekspose baru');
+    const schedule = await this.prisma.rekomtekExposeSchedule.findFirst({
+      where: {
+        id: scheduleId,
+        rekomtekId: id,
+        status: RekomtekExposeStatus.TERJADWAL,
+      },
+      select: {
+        id: true,
+        rekomtekId: true,
+        startsAt: true,
+        endsAt: true,
+        scheduleVersion: true,
+        status: true,
+        invitationArtifactId: true,
+      },
+    });
+    if (!schedule) {
+      throw new NotFoundException('Jadwal Ekspose terjadwal tidak ditemukan');
+    }
+    if (schedule.invitationArtifactId === dto.invitationArtifactId) {
+      throw new BadRequestException(
+        'Reschedule wajib menggunakan artefak Undangan Ekspose versi baru',
+      );
+    }
+    const invitationArtifact = await this.assertFinalArtifact(
+      id,
+      RekomtekArtifactType.UNDANGAN_EKSPOSE,
+      dto.invitationArtifactId,
+    );
+    if (invitationArtifact.stage !== current.workflowStage) {
+      throw new BadRequestException(
+        'Artefak Undangan Ekspose versi baru harus dibuat pada tahap reschedule saat ini',
+      );
+    }
+    const reason = dto.reason?.trim() || undefined;
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.rekomtekExposeSchedule.updateMany({
+        where: {
+          id: scheduleId,
+          rekomtekId: id,
+          status: RekomtekExposeStatus.TERJADWAL,
+          scheduleVersion: schedule.scheduleVersion,
+        },
+        data: {
+          startsAt,
+          endsAt,
+          invitationArtifactId: dto.invitationArtifactId,
+          scheduleVersion: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException(
+          'Jadwal Ekspose berubah bersamaan; muat ulang dan ulangi perubahan',
+        );
+      }
+      const event = await tx.rekomtekWorkflowEvent.create({
+        data: {
+          rekomtekId: id,
+          fromStage: current.workflowStage!,
+          toStage: current.workflowStage!,
+          action: 'RESCHEDULE_EKSPOSE',
+          actorId: user.userId,
+          actorRole: this.primaryRole(user),
+          actorPermissions: user.permissions,
+          reason,
+          metadata: {
+            scheduleId,
+            previousStartsAt: schedule.startsAt.toISOString(),
+            previousEndsAt: schedule.endsAt.toISOString(),
+            previousInvitationArtifactId: schedule.invitationArtifactId,
+            startsAt: startsAt.toISOString(),
+            endsAt: endsAt.toISOString(),
+            invitationArtifactId: dto.invitationArtifactId,
+            scheduleVersion: schedule.scheduleVersion + 1,
+          },
+        },
+      });
+      if (this.whatsappOutbox) {
+        await this.whatsappOutbox.enqueueExposeRescheduled(tx, {
+          scheduleId,
+          eventId: event.id,
+        });
+      }
+      return tx.rekomtekExposeSchedule.findUnique({
+        where: { id: scheduleId },
+      });
+    });
+  }
+
+  async cancelExpose(
+    id: string,
+    scheduleId: string,
+    dto: CancelExposeDto,
+    user: AuthenticatedUser,
+  ) {
+    this.assertPermission(user, 'rekomtek.expose');
+    this.assertRole(user, 'PIMPINAN', 'SUPER_ADMIN', 'ADMIN');
+    const current = await this.loadRecord(id);
+    this.assertStage(current, RekomtekWorkflowStage.EKSPOSE_TERJADWAL);
+    const reason = dto.reason.trim();
+    const schedule = await this.prisma.rekomtekExposeSchedule.findFirst({
+      where: {
+        id: scheduleId,
+        rekomtekId: id,
+        status: RekomtekExposeStatus.TERJADWAL,
+      },
+      select: { id: true, scheduleVersion: true, status: true },
+    });
+    if (!schedule) {
+      throw new NotFoundException('Jadwal Ekspose terjadwal tidak ditemukan');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.rekomtekExposeSchedule.updateMany({
+        where: {
+          id: scheduleId,
+          rekomtekId: id,
+          status: RekomtekExposeStatus.TERJADWAL,
+          scheduleVersion: schedule.scheduleVersion,
+        },
+        data: {
+          status: RekomtekExposeStatus.DIBATALKAN,
+          cancellationReason: reason,
+          scheduleVersion: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException(
+          'Jadwal Ekspose berubah bersamaan; muat ulang dan ulangi pembatalan',
+        );
+      }
+      return this.transitionInTransaction(
+        tx,
+        current,
+        RekomtekWorkflowStage.MENUNGGU_JADWAL_EKSPOSE,
+        'BATALKAN_EKSPOSE',
+        user,
+        undefined,
+        {
+          scheduleId,
+          scheduleVersion: schedule.scheduleVersion + 1,
+        },
+        reason,
+      );
+    });
   }
 
   async completeExpose(
@@ -1506,8 +1731,11 @@ export class RekomtekWorkflowService {
     });
     if (!visit)
       throw new NotFoundException('Tugas Kunjungan Lapangan tidak ditemukan');
-    if (visit.petugasId !== user.userId)
-      await this.assertPokjaAssigned(id, user);
+    if (visit.petugasId !== user.userId) {
+      throw new ForbiddenException(
+        'Hanya PIC Tim Pokja yang dapat mencatat realisasi Kunjungan Lapangan',
+      );
+    }
     return this.prisma.$transaction(async (tx) => {
       await tx.rekomtekFieldVisit.update({
         where: { id: visitId },
@@ -1740,6 +1968,7 @@ export class RekomtekWorkflowService {
         approvedBy: current.approvedBy ?? user.userId,
         approvedAt: current.approvedAt ?? new Date(),
         publishedAt: new Date(),
+        publishedArtifactId: finalArtifact.id,
         fileUrl: finalArtifact.storageKey,
       },
     );
@@ -1931,6 +2160,12 @@ export class RekomtekWorkflowService {
       const scheduleId = this.metadataString(metadata, 'scheduleId');
       if (scheduleId && target === RekomtekWorkflowStage.EKSPOSE_TERJADWAL) {
         await this.whatsappOutbox.enqueueExposeInvitation(tx, {
+          scheduleId,
+          eventId: event.id,
+        });
+      }
+      if (scheduleId && action === 'BATALKAN_EKSPOSE') {
+        await this.whatsappOutbox.enqueueExposeCancelled(tx, {
           scheduleId,
           eventId: event.id,
         });
@@ -2256,6 +2491,9 @@ export class RekomtekWorkflowService {
       Record<RekomtekWorkflowStage, RekomtekArtifactType[]>
     > = {
       [RekomtekWorkflowStage.MENUNGGU_JADWAL_EKSPOSE]: [
+        RekomtekArtifactType.UNDANGAN_EKSPOSE,
+      ],
+      [RekomtekWorkflowStage.EKSPOSE_TERJADWAL]: [
         RekomtekArtifactType.UNDANGAN_EKSPOSE,
       ],
       [RekomtekWorkflowStage.MENUNGGU_BA_EKSPOSE]: [

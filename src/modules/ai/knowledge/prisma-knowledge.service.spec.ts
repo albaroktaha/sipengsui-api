@@ -46,5 +46,8 @@ describe('PrismaKnowledgeService public knowledge boundary', () => {
     await service.search('rekomtek');
 
     expect(prisma.rekomtek.findMany).not.toHaveBeenCalled();
+    expect(prisma.rekomtekBerkasTemplate.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isActive: true } }),
+    );
   });
 });

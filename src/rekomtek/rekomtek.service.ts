@@ -9,6 +9,7 @@ import {
 import {
   BerkasSourceType,
   JenisPermohonan,
+  JenisSumberAir,
   Prisma,
   RekomtekStatus,
   RekomtekWorkflowStage,
@@ -21,6 +22,7 @@ import { UpdateRekomtekDto } from './dto/update-rekomtek.dto';
 import { QueryRekomtekDto } from './dto/query-rekomtek.dto';
 import { BerkasService } from './berkas.service';
 import { isPetugasOnly, isRekomtekStaff } from './rekomtek-access.util';
+import { resolveGeographicReferenceAtPoint } from './rekomtek-geographic-resolver';
 
 function parseJsonInput(value?: string): Prisma.InputJsonValue | undefined {
   if (!value) return undefined;
@@ -53,6 +55,13 @@ export class RekomtekService {
     id: true,
     createdById: true,
     status: true,
+    jenisSumberAir: true,
+    riverId: true,
+    customRiverName: true,
+    watershedId: true,
+    riverRegionId: true,
+    latitude: true,
+    longitude: true,
     sourceRevision: true,
     checklistRevision: true,
   } as const;
@@ -136,6 +145,7 @@ export class RekomtekService {
       );
     }
 
+    this.assertGeographicReferenceRiver(dto);
     await this.validateReferences(dto);
 
     const analysisData = parseJsonInput(dto.analysisData);
@@ -147,6 +157,7 @@ export class RekomtekService {
         judul: dto.judul,
         jenis: dto.jenis,
         jenisPermohonan: dto.jenisPermohonan as JenisPermohonan,
+        jenisSumberAir: dto.jenisSumberAir as JenisSumberAir,
         deskripsi: dto.deskripsi,
         status: RekomtekStatus.DRAFT,
         workflowStage: RekomtekWorkflowStage.PEMOHON_DRAFT,
@@ -156,6 +167,8 @@ export class RekomtekService {
         customRiverName: dto.customRiverName,
         watershedId: dto.watershedId,
         riverRegionId: dto.riverRegionId,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
         analysisData,
         parameters,
         fileUrl: dto.fileUrl,
@@ -298,6 +311,8 @@ export class RekomtekService {
           customRiverName: true,
           watershedId: true,
           riverRegionId: true,
+          latitude: true,
+          longitude: true,
           fileUrl: true,
           createdBy: true,
           createdById: true,
@@ -344,6 +359,48 @@ export class RekomtekService {
     });
   }
 
+  async resolveGeographicReference(
+    query: {
+      latitude: number;
+      longitude: number;
+    },
+    user: AuthenticatedUser,
+  ) {
+    this.assertCanSubmitApplication(user);
+
+    const [riverRegions, watersheds, rivers] = await Promise.all([
+      this.prisma.riverRegion.findMany({
+        where: { status: true },
+        select: { id: true, name: true, geometry: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.watershed.findMany({
+        where: { status: true },
+        select: {
+          id: true,
+          name: true,
+          riverRegionId: true,
+          area: true,
+          geometry: true,
+        },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.river.findMany({
+        where: { status: true },
+        select: { id: true, name: true, watershedId: true, geometry: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+
+    return resolveGeographicReferenceAtPoint(
+      query.latitude,
+      query.longitude,
+      riverRegions,
+      watersheds,
+      rivers,
+    );
+  }
+
   async update(id: string, dto: UpdateRekomtekDto, user: AuthenticatedUser) {
     const rekomtek = await this.canAccess(user, id, { forUpdate: true });
 
@@ -370,6 +427,43 @@ export class RekomtekService {
       }
     }
 
+    const geographicFieldsTouched =
+      dto.latitude !== undefined ||
+      dto.longitude !== undefined ||
+      dto.riverId !== undefined ||
+      dto.customRiverName !== undefined ||
+      dto.watershedId !== undefined ||
+      dto.riverRegionId !== undefined;
+    if (geographicFieldsTouched) {
+      this.assertGeographicReferenceRiver({
+        latitude:
+          dto.latitude !== undefined
+            ? dto.latitude
+            : rekomtek.latitude == null
+              ? null
+              : Number(rekomtek.latitude),
+        longitude:
+          dto.longitude !== undefined
+            ? dto.longitude
+            : rekomtek.longitude == null
+              ? null
+              : Number(rekomtek.longitude),
+        riverId: dto.riverId !== undefined ? dto.riverId : rekomtek.riverId,
+        customRiverName:
+          dto.customRiverName !== undefined
+            ? dto.customRiverName
+            : rekomtek.customRiverName,
+        watershedId:
+          dto.watershedId !== undefined
+            ? dto.watershedId
+            : rekomtek.watershedId,
+        riverRegionId:
+          dto.riverRegionId !== undefined
+            ? dto.riverRegionId
+            : rekomtek.riverRegionId,
+      });
+    }
+
     await this.validateReferences(dto);
 
     const analysisData = parseJsonInput(dto.analysisData);
@@ -384,6 +478,9 @@ export class RekomtekService {
         ...(dto.jenisPermohonan !== undefined && {
           jenisPermohonan: dto.jenisPermohonan as JenisPermohonan,
         }),
+        ...(dto.jenisSumberAir !== undefined && {
+          jenisSumberAir: dto.jenisSumberAir as JenisSumberAir,
+        }),
         ...(dto.deskripsi !== undefined && { deskripsi: dto.deskripsi }),
         ...(dto.stationId !== undefined && { stationId: dto.stationId }),
         ...(dto.riverId !== undefined && { riverId: dto.riverId }),
@@ -394,6 +491,8 @@ export class RekomtekService {
         ...(dto.riverRegionId !== undefined && {
           riverRegionId: dto.riverRegionId,
         }),
+        ...(dto.latitude !== undefined && { latitude: dto.latitude }),
+        ...(dto.longitude !== undefined && { longitude: dto.longitude }),
         ...(analysisData !== undefined && { analysisData }),
         ...(parameters !== undefined && { parameters }),
         ...(dto.fileUrl !== undefined && { fileUrl: dto.fileUrl }),
@@ -425,6 +524,12 @@ export class RekomtekService {
     if (rekomtek.status !== RekomtekStatus.DRAFT) {
       throw new BadRequestException(
         'Hanya rekomtek DRAFT yang dapat diajukan. Gunakan Ajukan Ulang untuk record REJECTED.',
+      );
+    }
+
+    if (!rekomtek.jenisSumberAir) {
+      throw new BadRequestException(
+        'Jenis sumber air wajib dipilih sebelum permohonan diajukan',
       );
     }
 
@@ -494,11 +599,14 @@ export class RekomtekService {
             deskripsi: original.deskripsi,
             status: RekomtekStatus.DRAFT,
             jenisPermohonan: original.jenisPermohonan,
+            jenisSumberAir: original.jenisSumberAir,
             stationId: original.stationId,
             riverId: original.riverId,
             customRiverName: original.customRiverName,
             watershedId: original.watershedId,
             riverRegionId: original.riverRegionId,
+            latitude: original.latitude,
+            longitude: original.longitude,
             ...(original.analysisData !== null && {
               analysisData: original.analysisData,
             }),
@@ -719,6 +827,35 @@ export class RekomtekService {
       where: { id },
       include: this.includeClause,
     });
+  }
+
+  private assertGeographicReferenceRiver(dto: {
+    latitude?: number | null;
+    longitude?: number | null;
+    riverId?: string | null;
+    customRiverName?: string | null;
+    watershedId?: string | null;
+    riverRegionId?: string | null;
+  }): void {
+    const hasLatitude = dto.latitude !== undefined && dto.latitude !== null;
+    const hasLongitude = dto.longitude !== undefined && dto.longitude !== null;
+    if (hasLatitude !== hasLongitude) {
+      throw new BadRequestException(
+        'Latitude dan longitude harus diisi bersamaan',
+      );
+    }
+
+    const hasGeographicReference =
+      hasLatitude || Boolean(dto.watershedId || dto.riverRegionId);
+    if (
+      hasGeographicReference &&
+      !dto.riverId &&
+      !dto.customRiverName?.trim()
+    ) {
+      throw new BadRequestException(
+        'Nama sungai wajib diisi jika sungai belum tersedia di database',
+      );
+    }
   }
 
   private async validateReferences(dto: {

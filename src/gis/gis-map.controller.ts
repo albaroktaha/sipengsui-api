@@ -3,17 +3,22 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
   Query,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  StreamableFile,
 } from '@nestjs/common';
 import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { createReadStream } from 'fs';
+import { basename } from 'path';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Permissions } from '../auth/decorators/permissions.decorator';
@@ -28,6 +33,10 @@ import {
   GisMasterDataParentDto,
   ImportGisMasterDataDto,
 } from './dto/gis-master-data-import.dto';
+
+type GisAuthenticatedRequest = {
+  user?: { id?: string; sub?: string };
+};
 
 @ApiTags('GIS Maps')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -50,10 +59,28 @@ export class GisMapController {
     return this.gisMapService.findOne(id);
   }
 
+  @Get(':id/file')
+  @Permissions('gis.read')
+  @Header('Cache-Control', 'private, no-store')
+  async downloadFile(@Param('id') id: string): Promise<StreamableFile> {
+    const { filePath, fileName } = await this.gisMapService.getOriginalFile(id);
+    const safeFileName = basename(fileName).replace(/["\r\n]/g, '_');
+    return new StreamableFile(createReadStream(filePath), {
+      type: 'application/octet-stream',
+      disposition: `attachment; filename="${safeFileName}"; filename*=UTF-8''${encodeURIComponent(safeFileName)}`,
+    });
+  }
+
   @Get(':id/geometry')
   @Permissions('gis.read')
   findOneWithGeometry(@Param('id') id: string) {
     return this.gisMapService.findOneWithGeometry(id);
+  }
+
+  @Get(':id/versions')
+  @Permissions('gis.read')
+  findVersions(@Param('id') id: string) {
+    return this.gisMapService.findVersions(id);
   }
 
   @Post()
@@ -82,8 +109,13 @@ export class GisMapController {
   uploadFile(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
+    @Req() request: GisAuthenticatedRequest,
   ) {
-    return this.gisMapService.uploadFile(id, file);
+    return this.gisMapService.uploadFile(
+      id,
+      file,
+      request.user?.id ?? request.user?.sub,
+    );
   }
 
   @Post(':id/master-data/preview')

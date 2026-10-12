@@ -235,6 +235,14 @@ describe('BerkasService', () => {
       service.generateFromTemplate('rekomtek-1', 'GALIAN_C', 'IZIN_BARU'),
     ).resolves.toBe(1);
 
+    expect(prisma.rekomtekBerkasTemplate.findMany).toHaveBeenCalledWith({
+      where: {
+        jenis: 'GALIAN_C',
+        jenisPermohonan: 'IZIN_BARU',
+        isActive: true,
+      },
+      orderBy: [{ nomorUrut: 'asc' }, { kode: 'asc' }],
+    });
     expect(prisma.rekomtekBerkas.createMany).toHaveBeenCalledWith({
       data: [
         expect.objectContaining({

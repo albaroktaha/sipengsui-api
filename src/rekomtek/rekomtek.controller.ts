@@ -6,6 +6,7 @@ import {
   Headers,
   Param,
   Patch,
+  Put,
   Post,
   Query,
   Res,
@@ -19,7 +20,6 @@ import {
   ApiBody,
   ApiConsumes,
   ApiOperation,
-  ApiProduces,
   ApiTags,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -34,11 +34,17 @@ import type { AuthenticatedUser } from '../auth/decorators/current-user.decorato
 
 import { RekomtekService } from './rekomtek.service';
 import { RekomtekWorkflowService } from './rekomtek-workflow.service';
+import { RejectionLetterApprovalService } from './rejection-letter-approval.service';
 import { rekomtekFileContentDisposition } from './rekomtek-file-delivery';
 
 import { CreateRekomtekDto } from './dto/create-rekomtek.dto';
 import { UpdateRekomtekDto } from './dto/update-rekomtek.dto';
 import { QueryRekomtekDto } from './dto/query-rekomtek.dto';
+import { GeographicReferenceQueryDto } from './dto/geographic-reference-query.dto';
+import {
+  ApproveRejectionLetterDto,
+  SaveRejectionLetterSettingsDto,
+} from './dto/rejection-letter.dto';
 import {
   AssignRekomtekTeamDto,
   CancelExposeDto,
@@ -51,6 +57,7 @@ import {
   EvaluateInitialRecheckDto,
   ExposeVerificationDto,
   IssueFieldVisitDto,
+  IssueRejectionLetterDto,
   OfficialReviewDto,
   ResolveWorkflowMigrationDto,
   RescheduleExposeDto,
@@ -69,6 +76,7 @@ export class RekomtekController {
   constructor(
     private readonly rekomtekService: RekomtekService,
     private readonly workflowService: RekomtekWorkflowService,
+    private readonly rejectionLetterApprovalService: RejectionLetterApprovalService,
   ) {}
 
   @Get('workflow/queue')
@@ -129,31 +137,6 @@ export class RekomtekController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.workflowService.getWorkflow(id, user);
-  }
-
-  @Get(':id/workflow/rejection/draft.pdf')
-  @Permissions('rekomtek.read')
-  @ApiProduces('application/pdf')
-  @ApiOperation({ summary: 'Unduh draft Surat Penolakan dalam format PDF' })
-  async rejectionLetterDraft(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthenticatedUser,
-    @Headers('x-sipengsui-download-mode') downloadMode: string | undefined,
-    @Res() response: Response,
-  ) {
-    const file = await this.workflowService.getRejectionLetterDraftPdf(
-      id,
-      user,
-    );
-    response.setHeader('Content-Type', 'application/pdf');
-    response.setHeader('Content-Length', file.buffer.length);
-    response.setHeader(
-      'Content-Disposition',
-      rekomtekFileContentDisposition(file.fileName, downloadMode),
-    );
-    response.setHeader('Cache-Control', 'no-store');
-    response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.status(200).send(file.buffer);
   }
 
   @Patch(':id/workflow/migration')
@@ -223,14 +206,164 @@ export class RekomtekController {
     return this.workflowService.evaluateInitialRecheck(id, dto, user);
   }
 
-  @Post(':id/workflow/rejection/issue')
-  @Permissions('rekomtek.reject')
-  @ApiOperation({ summary: 'Terbitkan Surat Penolakan sebagai artefak final' })
-  issueRejection(
+  @Get(':id/workflow/rejection/context')
+  @Permissions('rekomtek.reject', 'rekomtek.artifact')
+  @ApiOperation({
+    summary: 'Data pemohon dan hasil evaluasi untuk Surat Penolakan',
+  })
+  rejectionLetterContext(
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.workflowService.issueRejection(id, user);
+    return this.workflowService.getRejectionLetterContext(id, user);
+  }
+
+  @Get(':id/workflow/rejection/prepared-preview')
+  @ApiOperation({
+    summary: 'Unduh draf surat penolakan milik pemohon setelah disiapkan',
+  })
+  async getApplicantRejectionLetterDraft(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() response: Response,
+  ) {
+    const draft =
+      await this.rejectionLetterApprovalService.getApplicantPreparedPreview(
+        id,
+        user,
+      );
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${draft.fileName}"`,
+    );
+    response.setHeader('Content-Length', draft.buffer.length);
+    return response.status(200).send(draft.buffer);
+  }
+
+  @Post(':id/workflow/rejection/preview')
+  @Permissions('rekomtek.reject', 'rekomtek.artifact')
+  @ApiOperation({
+    summary:
+      'Endpoint preview manual lama dinonaktifkan; gunakan antrean persetujuan',
+  })
+  previewRejectionLetter(
+    @Param('id') id: string,
+    @Body() dto: IssueRejectionLetterDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.workflowService.previewRejectionLetter(id, dto, user);
+  }
+
+  @Post(':id/workflow/rejection/generate-and-issue')
+  @Permissions('rekomtek.reject', 'rekomtek.artifact')
+  @ApiOperation({
+    summary: 'Endpoint penerbitan langsung dinonaktifkan sampai TTE ditetapkan',
+  })
+  generateAndIssueRejection(
+    @Param('id') id: string,
+    @Body() dto: IssueRejectionLetterDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.workflowService.generateAndIssueRejection(id, dto, user);
+  }
+
+  @Get('rejection-letter/settings')
+  @Permissions('rekomtek.rejection-letter.manage')
+  @ApiOperation({ summary: 'Pengaturan templat dan penomoran surat penolakan' })
+  getRejectionLetterSettings(@CurrentUser() user: AuthenticatedUser) {
+    return this.rejectionLetterApprovalService.getSettings(user);
+  }
+
+  @Get('rejection-letter/eligible-heads')
+  @Permissions('rekomtek.rejection-letter.manage')
+  @ApiOperation({ summary: 'Kepala Bidang aktif yang berhak menyetujui surat' })
+  eligibleRejectionLetterHeads(@CurrentUser() user: AuthenticatedUser) {
+    return this.rejectionLetterApprovalService.listEligibleHeads(user);
+  }
+
+  @Put('rejection-letter/settings')
+  @Permissions('rekomtek.rejection-letter.manage')
+  @ApiOperation({
+    summary: 'Simpan pengaturan dan versi templat surat penolakan',
+  })
+  saveRejectionLetterSettings(
+    @Body() dto: SaveRejectionLetterSettingsDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.rejectionLetterApprovalService.saveSettings(dto, user);
+  }
+
+  @Get('workflow/rejection-letters/queue')
+  @Permissions('rekomtek.approve.final')
+  @ApiOperation({
+    summary: 'Antrean persetujuan surat penolakan Kepala Bidang',
+  })
+  rejectionLetterApprovalQueue(@CurrentUser() user: AuthenticatedUser) {
+    return this.rejectionLetterApprovalService.listApprovalQueue(user);
+  }
+
+  @Get('workflow/rejection-letters/:jobId/preview')
+  @Permissions('rekomtek.approve.final')
+  @ApiOperation({ summary: 'Pratinjau surat sebelum alokasi nomor' })
+  rejectionLetterApprovalPreview(
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.rejectionLetterApprovalService.getApprovalPreview(jobId, user);
+  }
+
+  @Post('workflow/rejection-letters/:jobId/approve')
+  @Permissions('rekomtek.approve.final')
+  @ApiOperation({
+    summary: 'Setujui dan terbitkan surat penolakan resmi dengan QR verifikasi',
+  })
+  approveRejectionLetter(
+    @Param('jobId') jobId: string,
+    @Body() dto: ApproveRejectionLetterDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.rejectionLetterApprovalService.approveAndPreparePreview(
+      jobId,
+      dto,
+      user,
+    );
+  }
+
+  @Post('workflow/rejection-letters/:jobId/test-qr-publish')
+  @Permissions('rekomtek.approve.final')
+  @ApiOperation({
+    summary: 'Terbitkan QR uji lokal untuk job backfill yang ditandai uji',
+  })
+  publishLocalQrTestJob(
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.rejectionLetterApprovalService.publishLocalQrTestJob(
+      jobId,
+      user,
+    );
+  }
+
+  @Get('workflow/rejection-letters/:jobId/prepared-preview')
+  @Permissions('rekomtek.approve.final')
+  @ApiOperation({
+    summary: 'Unduh pratinjau internal yang belum ditandatangani',
+  })
+  async getPreparedRejectionLetterPreview(
+    @Param('jobId') jobId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() response: Response,
+  ) {
+    const preview =
+      await this.rejectionLetterApprovalService.getPreparedPreview(jobId, user);
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader(
+      'Content-Disposition',
+      `inline; filename="${preview.fileName}"`,
+    );
+    response.setHeader('Content-Length', preview.buffer.length);
+    return response.status(200).send(preview.buffer);
   }
 
   @Post(':id/workflow/artifacts')
@@ -509,6 +642,16 @@ export class RekomtekController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.rekomtekService.findAll(query, user);
+  }
+
+  @Get('geographic-reference')
+  @Permissions('rekomtek.create')
+  @ApiOperation({ summary: 'Cocokkan titik dengan referensi geografis' })
+  resolveGeographicReference(
+    @Query() query: GeographicReferenceQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.rekomtekService.resolveGeographicReference(query, user);
   }
 
   @Get(':id')

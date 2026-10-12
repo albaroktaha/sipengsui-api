@@ -3,6 +3,7 @@ import { UsersService } from './users.service';
 describe('UsersService role synchronization', () => {
   function createService() {
     const prisma = {
+      $transaction: jest.fn(),
       user: {
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
@@ -24,10 +25,15 @@ describe('UsersService role synchronization', () => {
         findUnique: jest.fn(),
         create: jest.fn(),
         createMany: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
         deleteMany: jest.fn(),
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
+    prisma.$transaction.mockImplementation(
+      (callback: (client: typeof prisma) => unknown) => callback(prisma),
+    );
     return { service: new UsersService(prisma as never), prisma };
   }
 
@@ -49,6 +55,13 @@ describe('UsersService role synchronization', () => {
       userId: 'user-1',
       roleId: 'pimpinan-role-id',
     });
+    prisma.userPermission.findMany.mockResolvedValue([
+      {
+        permissionId: 'user-default-permission',
+        manualGrant: false,
+        sourceRoleIds: ['user-role-id'],
+      },
+    ]);
 
     await service.assignRole('user-1', 'pimpinan-role-id');
 
@@ -58,6 +71,14 @@ describe('UsersService role synchronization', () => {
     });
     expect(prisma.userRole.deleteMany).toHaveBeenCalledWith({
       where: { userId: 'user-1', roleId: 'user-role-id' },
+    });
+    expect(prisma.userPermission.delete).toHaveBeenCalledWith({
+      where: {
+        userId_permissionId: {
+          userId: 'user-1',
+          permissionId: 'user-default-permission',
+        },
+      },
     });
   });
 
@@ -97,16 +118,266 @@ describe('UsersService role synchronization', () => {
 
     expect(prisma.userPermission.createMany).toHaveBeenCalledWith({
       data: [
-        { userId: 'user-1', permissionId: 'read-id' },
-        { userId: 'user-1', permissionId: 'berkas-id' },
-        { userId: 'user-1', permissionId: 'evaluate-id' },
-        { userId: 'user-1', permissionId: 'reject-id' },
-        { userId: 'user-1', permissionId: 'workflow-read-id' },
-        { userId: 'user-1', permissionId: 'update-id' },
-        { userId: 'user-1', permissionId: 'delete-id' },
+        {
+          userId: 'user-1',
+          permissionId: 'read-id',
+          manualGrant: false,
+          sourceRoleIds: ['petugas-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'berkas-id',
+          manualGrant: false,
+          sourceRoleIds: ['petugas-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'evaluate-id',
+          manualGrant: false,
+          sourceRoleIds: ['petugas-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'reject-id',
+          manualGrant: false,
+          sourceRoleIds: ['petugas-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'workflow-read-id',
+          manualGrant: false,
+          sourceRoleIds: ['petugas-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'update-id',
+          manualGrant: false,
+          sourceRoleIds: ['petugas-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'delete-id',
+          manualGrant: false,
+          sourceRoleIds: ['petugas-role-id'],
+        },
       ],
       skipDuplicates: true,
     });
+  });
+
+  it('grants GIS data management but not publication permission to PETUGAS_PETA', async () => {
+    const { service, prisma } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      roleId: null,
+      role: null,
+      userRoles: [],
+      userPermissions: [],
+    });
+    prisma.role.findUnique.mockResolvedValue({
+      id: 'petugas-peta-role-id',
+      name: 'PETUGAS_PETA',
+    });
+    prisma.userRole.findUnique.mockResolvedValue(null);
+    const expectedSlugs = [
+      'gis.read',
+      'gis.manage',
+      'stations.read',
+      'stations.create',
+      'stations.update',
+      'stations.delete',
+      'master-data.read',
+      'master-data.create',
+      'master-data.update',
+      'master-data.delete',
+    ];
+    const availablePermissions = [
+      ...expectedSlugs.map((slug, index) => ({
+        id: `permission-${index}`,
+        slug,
+      })),
+      { id: 'gis-publish-id', slug: 'gis.publish' },
+    ];
+    prisma.permission.findMany.mockImplementation(
+      (args: { where?: { slug?: { in?: string[] } } }) => {
+        const requested = args.where?.slug?.in ?? [];
+        return Promise.resolve(
+          availablePermissions.filter(({ slug }) => requested.includes(slug)),
+        );
+      },
+    );
+
+    await service.assignRole('user-1', 'petugas-peta-role-id');
+
+    expect(prisma.permission.findMany).toHaveBeenCalledWith({
+      where: { slug: { in: expectedSlugs } },
+      select: { id: true },
+    });
+    expect(prisma.userPermission.createMany).toHaveBeenCalledWith({
+      data: expectedSlugs.map((_, index) => ({
+        userId: 'user-1',
+        permissionId: `permission-${index}`,
+        manualGrant: false,
+        sourceRoleIds: ['petugas-peta-role-id'],
+      })),
+      skipDuplicates: true,
+    });
+  });
+
+  it('removes only the removed role grants and keeps manual or other-role grants', async () => {
+    const { service, prisma } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      roleId: 'pimpinan-role-id',
+      role: { id: 'pimpinan-role-id', name: 'PIMPINAN' },
+      userRoles: [],
+      userPermissions: [],
+    });
+    prisma.userRole.findUnique.mockResolvedValue({
+      id: 'membership-1',
+      userId: 'user-1',
+      roleId: 'pimpinan-role-id',
+    });
+    prisma.userPermission.findMany.mockResolvedValue([
+      {
+        permissionId: 'role-only-permission',
+        manualGrant: false,
+        sourceRoleIds: ['pimpinan-role-id'],
+      },
+      {
+        permissionId: 'manual-permission',
+        manualGrant: true,
+        sourceRoleIds: ['pimpinan-role-id'],
+      },
+      {
+        permissionId: 'shared-permission',
+        manualGrant: false,
+        sourceRoleIds: ['pimpinan-role-id', 'petugas-peta-role-id'],
+      },
+    ]);
+
+    await service.removeRole('user-1', 'pimpinan-role-id');
+
+    expect(prisma.userPermission.delete).toHaveBeenCalledWith({
+      where: {
+        userId_permissionId: {
+          userId: 'user-1',
+          permissionId: 'role-only-permission',
+        },
+      },
+    });
+    expect(prisma.userPermission.update).toHaveBeenNthCalledWith(1, {
+      where: {
+        userId_permissionId: {
+          userId: 'user-1',
+          permissionId: 'manual-permission',
+        },
+      },
+      data: { sourceRoleIds: [] },
+    });
+    expect(prisma.userPermission.update).toHaveBeenNthCalledWith(2, {
+      where: {
+        userId_permissionId: {
+          userId: 'user-1',
+          permissionId: 'shared-permission',
+        },
+      },
+      data: { sourceRoleIds: ['petugas-peta-role-id'] },
+    });
+  });
+
+  it('keeps role grants inherited when syncing unrelated manual permissions', async () => {
+    const { service, prisma } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      roleId: 'pimpinan-role-id',
+      role: { id: 'pimpinan-role-id', name: 'PIMPINAN' },
+      userRoles: [],
+      userPermissions: [],
+    });
+    prisma.userPermission.findMany.mockResolvedValueOnce([
+      {
+        permissionId: 'inherited-permission',
+        manualGrant: false,
+        sourceRoleIds: ['pimpinan-role-id'],
+      },
+      {
+        permissionId: 'old-manual-permission',
+        manualGrant: true,
+        sourceRoleIds: [],
+      },
+    ]);
+    prisma.permission.findMany.mockResolvedValue([
+      { id: 'inherited-permission' },
+      { id: 'new-manual-permission' },
+    ]);
+
+    await service.syncPermissions('user-1', [
+      'inherited-permission',
+      'new-manual-permission',
+    ]);
+
+    expect(prisma.userPermission.update).not.toHaveBeenCalled();
+    expect(prisma.userPermission.delete).toHaveBeenCalledWith({
+      where: {
+        userId_permissionId: {
+          userId: 'user-1',
+          permissionId: 'old-manual-permission',
+        },
+      },
+    });
+    expect(prisma.userPermission.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: 'user-1',
+          permissionId: 'new-manual-permission',
+          manualGrant: true,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('rejects removing a permission that is still inherited from an active role', async () => {
+    const { service, prisma } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      roleId: 'pimpinan-role-id',
+      role: { id: 'pimpinan-role-id', name: 'PIMPINAN' },
+      userRoles: [],
+      userPermissions: [],
+    });
+    prisma.userPermission.findMany.mockResolvedValueOnce([
+      {
+        permissionId: 'inherited-permission',
+        manualGrant: false,
+        sourceRoleIds: ['pimpinan-role-id'],
+      },
+    ]);
+
+    await expect(service.syncPermissions('user-1', [])).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(prisma.userPermission.delete).not.toHaveBeenCalled();
+    expect(prisma.userPermission.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown permission before changing the current set', async () => {
+    const { service, prisma } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      roleId: 'pimpinan-role-id',
+      role: { id: 'pimpinan-role-id', name: 'PIMPINAN' },
+      userRoles: [],
+      userPermissions: [],
+    });
+    prisma.permission.findMany.mockResolvedValue([]);
+
+    await expect(
+      service.syncPermissions('user-1', ['unknown-permission-id']),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(prisma.userPermission.delete).not.toHaveBeenCalled();
+    expect(prisma.userPermission.deleteMany).not.toHaveBeenCalled();
   });
 
   it('allows update permission assignment for Petugas-only users', async () => {

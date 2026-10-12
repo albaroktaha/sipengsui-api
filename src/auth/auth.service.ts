@@ -166,6 +166,8 @@ export class AuthService {
         data: permissions.map((perm) => ({
           userId: user.id,
           permissionId: perm.id,
+          manualGrant: false,
+          sourceRoleIds: [userRole.id],
         })),
         skipDuplicates: true,
       });

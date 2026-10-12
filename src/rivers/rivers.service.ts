@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { GIS_MASTER_GEOMETRY_TYPES } from '../gis/gis-geometry.validator';
+import { assertGeoJsonGeometry } from '../gis/gis-geometry.policy';
 import { CreateRiverDto } from './dto/create-river.dto';
 import { UpdateRiverDto } from './dto/update-river.dto';
 
@@ -13,6 +15,11 @@ export class RiversService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateRiverDto) {
+    assertGeoJsonGeometry(
+      dto.geometry,
+      GIS_MASTER_GEOMETRY_TYPES.RIVER,
+      'sungai',
+    );
     return this.prisma.river.create({
       data: {
         watershedId: dto.watershedId,
@@ -63,6 +70,13 @@ export class RiversService {
 
   async update(id: string, dto: UpdateRiverDto) {
     await this.findOne(id);
+    if (dto.geometry !== undefined) {
+      assertGeoJsonGeometry(
+        dto.geometry,
+        GIS_MASTER_GEOMETRY_TYPES.RIVER,
+        'sungai',
+      );
+    }
 
     return this.prisma.river.update({
       where: { id },

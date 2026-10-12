@@ -559,6 +559,7 @@ export class BerkasService {
       where: {
         jenis,
         jenisPermohonan: jenisPermohonan as JenisPermohonan,
+        isActive: true,
       },
       orderBy: [{ nomorUrut: 'asc' }, { kode: 'asc' }],
     });

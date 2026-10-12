@@ -55,52 +55,78 @@ export class WhatsAppMessageRegistry {
   ): string | null {
     const date = new Intl.DateTimeFormat('id-ID', {
       timeZone: context.timeZone,
-      day: '2-digit',
-      month: '2-digit',
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
       year: 'numeric',
     }).format(context.startsAt);
     const zone = context.timeZone === 'Asia/Jakarta' ? 'WIB' : context.timeZone;
-    const time = `${this.formatTime(context.startsAt, context.timeZone)}–${this.formatTime(context.endsAt, context.timeZone)} ${zone}`;
-    const method = this.limit(context.method, 40);
-    const venue = this.limit(context.venue?.trim() || '—', 240);
-    const agenda = this.limit(context.agenda, 300);
-    const invitation = this.limit(context.invitationNumber, 120);
-    const companyName = this.limit(context.companyName, 200);
+    const time = `${this.formatTime(context.startsAt, context.timeZone)}-${this.formatTime(context.endsAt, context.timeZone)} ${zone}`;
+    const method = this.exposeMethodLabel(context.method);
+    const venue = this.singleLine(context.venue ?? '', 240);
+    const agenda = this.singleLine(context.agenda, 300);
+    const invitation = this.singleLine(context.invitationNumber, 120);
+    const companyName = this.singleLine(context.companyName, 200);
     const url = this.limit(context.applicationUrl, 500);
+    const invitationLine = invitation ? [`Nomor undangan: ${invitation}`] : [];
+    const venueLine =
+      venue && this.exposeMethodHasVenue(context.method)
+        ? [`Tempat: ${venue}`]
+        : [];
+    const agendaLine = agenda ? [`Agenda: ${agenda}`] : [];
     switch (key) {
       case 'EXPOSE_INVITATION':
         return [
-          `Undangan Ekspose ${invitation} untuk Permohonan Rekomtek ${companyName},`,
-          `Waktu: ${date}, ${time}`,
+          '*Undangan Ekspose*',
+          `Pemohon: ${companyName}`,
+          ...invitationLine,
+          `Tanggal: ${date}`,
+          `Waktu: ${time}`,
           `Metode: ${method}`,
-          `Tempat: ${venue}`,
-          `Agenda: ${agenda}`,
-          `Buka detail undangan di SIPENGSUI: ${url}`,
+          ...venueLine,
+          ...agendaLine,
+          '',
+          'Lihat undangan di SIPENGSUI:',
+          url,
         ].join('\n');
       case 'EXPOSE_RESCHEDULED':
         return [
-          `Jadwal Ekspose untuk Permohonan Rekomtek ${companyName} telah diperbarui.`,
-          `Waktu: ${date}, ${time}`,
+          '*Jadwal Ekspose Diperbarui*',
+          `Pemohon: ${companyName}`,
+          ...invitationLine,
+          `Tanggal: ${date}`,
+          `Waktu: ${time}`,
           `Metode: ${method}`,
-          `Tempat: ${venue}`,
-          `Agenda: ${agenda}`,
-          `Buka detail undangan di SIPENGSUI: ${url}`,
+          ...venueLine,
+          ...agendaLine,
+          '',
+          'Lihat detail undangan di SIPENGSUI:',
+          url,
         ].join('\n');
       case 'EXPOSE_CANCELLED':
         return [
-          `Jadwal Ekspose untuk Permohonan Rekomtek ${companyName} telah dibatalkan.`,
+          '*Jadwal Ekspose Dibatalkan*',
+          `Pemohon: ${companyName}`,
+          ...invitationLine,
+          `Waktu: ${date}, ${time}`,
           ...(context.cancellationReason?.trim()
-            ? [`Alasan: ${this.limit(context.cancellationReason, 300)}`]
+            ? [`Alasan: ${this.singleLine(context.cancellationReason, 300)}`]
             : []),
-          `Buka detail undangan di SIPENGSUI: ${url}`,
+          '',
+          'Lihat detail undangan di SIPENGSUI:',
+          url,
         ].join('\n');
       case 'EXPOSE_REMINDER':
         return [
-          `Pengingat: Ekspose Permohonan Rekomtek ${companyName}`,
-          `Waktu: ${date}, ${time}`,
+          '*Pengingat Ekspose*',
+          `Pemohon: ${companyName}`,
+          `Tanggal: ${date}`,
+          `Waktu: ${time}`,
           `Metode: ${method}`,
-          `Tempat: ${venue}`,
-          `Buka detail undangan di SIPENGSUI: ${url}`,
+          ...venueLine,
+          '',
+          'Lihat detail undangan di SIPENGSUI:',
+          url,
         ].join('\n');
       default:
         return null;
@@ -114,6 +140,27 @@ export class WhatsAppMessageRegistry {
       minute: '2-digit',
       hourCycle: 'h23',
     }).format(date);
+  }
+
+  private exposeMethodLabel(method: string): string {
+    switch (method) {
+      case 'LURING':
+        return 'Luring';
+      case 'DARING':
+        return 'Daring';
+      case 'HIBRID':
+        return 'Hibrida';
+      default:
+        return this.singleLine(method, 40);
+    }
+  }
+
+  private exposeMethodHasVenue(method: string): boolean {
+    return method === 'LURING' || method === 'HIBRID';
+  }
+
+  private singleLine(value: string, max: number): string {
+    return value.replace(/\s+/g, ' ').trim().slice(0, max);
   }
 
   private limit(value: string, max: number): string {

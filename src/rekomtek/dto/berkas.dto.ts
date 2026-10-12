@@ -4,14 +4,89 @@ import {
   IsBoolean,
   IsEnum,
   IsIn,
+  IsNotEmpty,
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
 } from 'class-validator';
 import { BerkasSourceType } from '@prisma/client';
+import { JenisPermohonan } from '@prisma/client';
+import { REKOMTEK_JENIS_OPTIONS } from './create-rekomtek.dto';
+
+export class CreateBerkasTemplateDto {
+  @ApiProperty({ description: 'Jenis rekomtek', enum: REKOMTEK_JENIS_OPTIONS })
+  @IsIn(REKOMTEK_JENIS_OPTIONS)
+  jenis!: (typeof REKOMTEK_JENIS_OPTIONS)[number];
+
+  @ApiProperty({ description: 'Jenis permohonan', enum: JenisPermohonan })
+  @IsEnum(JenisPermohonan)
+  jenisPermohonan!: JenisPermohonan;
+
+  @ApiProperty({ description: 'Kode checklist unik dalam jenis permohonan' })
+  @IsString()
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+  @MaxLength(32)
+  kode!: string;
+
+  @ApiProperty({ description: 'Urutan tampil checklist', minimum: 1 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  nomorUrut!: number;
+
+  @ApiProperty({ description: 'Nama atau uraian Berkas Persyaratan' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  uraian!: string;
+
+  @ApiPropertyOptional({ description: 'Tandai sebagai persyaratan wajib' })
+  @IsOptional()
+  @IsBoolean()
+  isRequired?: boolean;
+
+  @ApiPropertyOptional({ description: 'Item memiliki rincian turunan' })
+  @IsOptional()
+  @IsBoolean()
+  hasSubItems?: boolean;
+}
+
+export class UpdateBerkasTemplateDto {
+  @ApiPropertyOptional({ description: 'Kode checklist' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+  @MaxLength(32)
+  kode?: string;
+
+  @ApiPropertyOptional({ description: 'Urutan tampil checklist', minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  nomorUrut?: number;
+
+  @ApiPropertyOptional({ description: 'Nama atau uraian Berkas Persyaratan' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  uraian?: string;
+
+  @ApiPropertyOptional({ description: 'Tandai sebagai persyaratan wajib' })
+  @IsOptional()
+  @IsBoolean()
+  isRequired?: boolean;
+
+  @ApiPropertyOptional({ description: 'Item memiliki rincian turunan' })
+  @IsOptional()
+  @IsBoolean()
+  hasSubItems?: boolean;
+}
 
 export class UpdateBerkasDto {
   @ApiPropertyOptional({
@@ -82,7 +157,7 @@ export class ReturnForRevisionDto {
 export class BerkasQueryDto {
   @ApiPropertyOptional({
     description: 'Filter jenis rekomtek',
-    example: 'GALIAN_C',
+    example: 'PERTAMBANGAN_MINERAL_BUKAN_LOGAM_DAN_BATUAN_DI_SUNGAI',
   })
   @IsOptional()
   @IsString()
@@ -93,8 +168,8 @@ export class BerkasQueryDto {
     example: 'IZIN_BARU',
   })
   @IsOptional()
-  @IsString()
-  jenisPermohonan?: string;
+  @IsEnum(JenisPermohonan)
+  jenisPermohonan?: JenisPermohonan;
 
   @ApiPropertyOptional({
     description: 'Filter status verifikasi checklist',

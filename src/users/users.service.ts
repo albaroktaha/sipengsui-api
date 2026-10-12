@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -18,6 +20,18 @@ import { PETUGAS_WORKFLOW_PERMISSION_SLUGS } from '../rekomtek/rekomtek-permissi
 
 const ROLE_PERMISSION_GRANTS: Partial<Record<RoleType, readonly string[]>> = {
   [RoleType.USER]: ['rekomtek.correct.initial', 'rekomtek.correct.post-expose'],
+  [RoleType.PETUGAS_PETA]: [
+    'gis.read',
+    'gis.manage',
+    'stations.read',
+    'stations.create',
+    'stations.update',
+    'stations.delete',
+    'master-data.read',
+    'master-data.create',
+    'master-data.update',
+    'master-data.delete',
+  ],
   [RoleType.PIMPINAN]: [
     'rekomtek.read',
     'rekomtek.workflow.read',
@@ -388,6 +402,7 @@ export class UsersService {
 
   private async grantRolePermissions(
     userId: string,
+    roleId: string,
     roleName: RoleType,
   ): Promise<void> {
     const slugs = ROLE_PERMISSION_GRANTS[roleName];
@@ -399,10 +414,72 @@ export class UsersService {
     });
     if (permissions.length === 0) return;
 
-    await this.prisma.userPermission.createMany({
-      data: permissions.map(({ id }) => ({ userId, permissionId: id })),
-      skipDuplicates: true,
+    const permissionIds = permissions.map(({ id }) => id);
+    const currentGrants = await this.prisma.userPermission.findMany({
+      where: { userId, permissionId: { in: permissionIds } },
+      select: { permissionId: true, sourceRoleIds: true },
     });
+    const currentByPermissionId = new Map(
+      currentGrants.map((grant) => [grant.permissionId, grant]),
+    );
+    const newGrants = permissions.filter(
+      ({ id }) => !currentByPermissionId.has(id),
+    );
+
+    if (newGrants.length > 0) {
+      await this.prisma.userPermission.createMany({
+        data: newGrants.map(({ id }) => ({
+          userId,
+          permissionId: id,
+          manualGrant: false,
+          sourceRoleIds: [roleId],
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    for (const grant of currentGrants) {
+      if (grant.sourceRoleIds.includes(roleId)) continue;
+      await this.prisma.userPermission.update({
+        where: {
+          userId_permissionId: { userId, permissionId: grant.permissionId },
+        },
+        data: { sourceRoleIds: [...grant.sourceRoleIds, roleId] },
+      });
+    }
+  }
+
+  private async revokeRolePermissionSources(
+    userId: string,
+    roleId: string,
+    client: Pick<Prisma.TransactionClient, 'userPermission'> = this.prisma,
+  ): Promise<void> {
+    const grants = await client.userPermission.findMany({
+      where: { userId, sourceRoleIds: { has: roleId } },
+      select: {
+        permissionId: true,
+        manualGrant: true,
+        sourceRoleIds: true,
+      },
+    });
+
+    for (const grant of grants) {
+      const remainingRoleIds = grant.sourceRoleIds.filter(
+        (sourceRoleId) => sourceRoleId !== roleId,
+      );
+      const where = {
+        userId_permissionId: { userId, permissionId: grant.permissionId },
+      };
+
+      if (!grant.manualGrant && remainingRoleIds.length === 0) {
+        await client.userPermission.delete({ where });
+      } else {
+        await client.userPermission.update({
+          where,
+          data: { sourceRoleIds: remainingRoleIds },
+        });
+      }
+    }
   }
 
   async assignRole(userId: string, roleId: string) {
@@ -422,23 +499,25 @@ export class UsersService {
     const promotesFromUserRole =
       user.role?.name === 'USER' && role.name !== 'USER';
     if (promotesFromUserRole && user.roleId !== roleId) {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { roleId },
-      });
-      if (user.role?.id) {
-        await this.prisma.userRole.deleteMany({
-          where: { userId, roleId: user.role.id },
+      await this.prisma.$transaction(async (tx) => {
+        if (user.role?.id) {
+          await this.revokeRolePermissionSources(userId, user.role.id, tx);
+          await tx.userRole.deleteMany({
+            where: { userId, roleId: user.role.id },
+          });
+        }
+        await tx.user.update({
+          where: { id: userId },
+          data: { roleId },
         });
-      }
-    }
-
-    await this.grantRolePermissions(userId, role.name);
-    if (this.isPetugasOnlyAccount(user, role.name)) {
-      await this.revokePetugasRestrictedPermissions(userId);
+      });
     }
 
     if (existing) {
+      await this.grantRolePermissions(userId, roleId, role.name);
+      if (this.isPetugasOnlyAccount(user, role.name)) {
+        await this.revokePetugasRestrictedPermissions(userId);
+      }
       return existing;
     }
 
@@ -450,10 +529,15 @@ export class UsersService {
       });
     }
 
-    return this.prisma.userRole.create({
+    const userRole = await this.prisma.userRole.create({
       data: { userId, roleId },
       include: { role: true },
     });
+    await this.grantRolePermissions(userId, roleId, role.name);
+    if (this.isPetugasOnlyAccount(user, role.name)) {
+      await this.revokePetugasRestrictedPermissions(userId);
+    }
+    return userRole;
   }
 
   async removeRole(userId: string, roleId: string) {
@@ -467,18 +551,21 @@ export class UsersService {
       throw new NotFoundException('User tidak memiliki role tersebut');
     }
 
-    await this.prisma.userRole.delete({
-      where: { userId_roleId: { userId, roleId } },
-    });
-
-    // Jika role yang dihapus adalah role primer, kosongkan roleId.
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (user?.roleId === roleId) {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { roleId: null },
+    await this.prisma.$transaction(async (tx) => {
+      await this.revokeRolePermissionSources(userId, roleId, tx);
+      await tx.userRole.delete({
+        where: { userId_roleId: { userId, roleId } },
       });
-    }
+
+      // Jika role yang dihapus adalah role primer, kosongkan roleId.
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (user?.roleId === roleId) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { roleId: null },
+        });
+      }
+    });
 
     const currentUser = await this.findById(userId);
     if (this.isPetugasOnlyAccount(currentUser)) {
@@ -514,17 +601,34 @@ export class UsersService {
     });
 
     if (existing) {
+      if (!existing.manualGrant) {
+        return this.prisma.userPermission.update({
+          where: { userId_permissionId: { userId, permissionId } },
+          data: { manualGrant: true },
+          include: { permission: true },
+        });
+      }
       return existing;
     }
 
     return this.prisma.userPermission.create({
-      data: { userId, permissionId },
+      data: { userId, permissionId, manualGrant: true },
       include: { permission: true },
     });
   }
 
   async removePermission(userId: string, permissionId: string) {
     await this.findById(userId);
+
+    const existing = await this.prisma.userPermission.findUnique({
+      where: { userId_permissionId: { userId, permissionId } },
+      select: { sourceRoleIds: true },
+    });
+    if (existing?.sourceRoleIds.length) {
+      throw new ConflictException(
+        'Permission masih diberikan oleh role aktif. Hapus role sumber terlebih dahulu.',
+      );
+    }
 
     return this.prisma.userPermission.delete({
       where: { userId_permissionId: { userId, permissionId } },
@@ -548,20 +652,84 @@ export class UsersService {
       }
     }
 
-    // Hapus semua permission yang ada
-    await this.prisma.userPermission.deleteMany({
-      where: { userId },
-    });
-
-    // Assign permission baru
-    if (permissionIds.length > 0) {
-      await this.prisma.userPermission.createMany({
-        data: permissionIds.map((permissionId) => ({
-          userId,
-          permissionId,
-        })),
+    const uniquePermissionIds = [...new Set(permissionIds)];
+    if (uniquePermissionIds.length > 0) {
+      const existingPermissions = await this.prisma.permission.findMany({
+        where: { id: { in: uniquePermissionIds } },
+        select: { id: true },
       });
+      if (existingPermissions.length !== uniquePermissionIds.length) {
+        throw new BadRequestException(
+          'Satu atau lebih permission tidak ditemukan.',
+        );
+      }
     }
+
+    await this.prisma.$transaction(async (tx) => {
+      const currentPermissions = await tx.userPermission.findMany({
+        where: { userId },
+        select: {
+          permissionId: true,
+          manualGrant: true,
+          sourceRoleIds: true,
+        },
+      });
+      const requestedIds = new Set(uniquePermissionIds);
+      const inheritedRemovals = currentPermissions.filter(
+        (current) =>
+          current.sourceRoleIds.length > 0 &&
+          !requestedIds.has(current.permissionId),
+      );
+      if (inheritedRemovals.length > 0) {
+        throw new ConflictException(
+          'Permission masih diberikan oleh role aktif. Hapus role sumber terlebih dahulu.',
+        );
+      }
+
+      const currentIds = new Set(
+        currentPermissions.map(({ permissionId }) => permissionId),
+      );
+
+      for (const current of currentPermissions) {
+        if (requestedIds.has(current.permissionId)) {
+          if (!current.manualGrant && current.sourceRoleIds.length === 0) {
+            await tx.userPermission.update({
+              where: {
+                userId_permissionId: {
+                  userId,
+                  permissionId: current.permissionId,
+                },
+              },
+              data: { manualGrant: true },
+            });
+          }
+          continue;
+        }
+
+        await tx.userPermission.delete({
+          where: {
+            userId_permissionId: {
+              userId,
+              permissionId: current.permissionId,
+            },
+          },
+        });
+      }
+
+      const newPermissionIds = uniquePermissionIds.filter(
+        (id) => !currentIds.has(id),
+      );
+      if (newPermissionIds.length > 0) {
+        await tx.userPermission.createMany({
+          data: newPermissionIds.map((permissionId) => ({
+            userId,
+            permissionId,
+            manualGrant: true,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    });
 
     return this.findUserPermissions(userId);
   }

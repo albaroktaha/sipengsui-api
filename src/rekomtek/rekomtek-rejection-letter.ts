@@ -1,4 +1,41 @@
 import PDFDocument from 'pdfkit';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  getRejectionLetterPdfLayout,
+  RejectionLetterLayoutBlockId,
+  RejectionLetterLayoutConfig,
+  resolveRejectionLetterLayoutConfig,
+} from './rejection-letter-layout';
+
+export const REJECTION_LETTER_LOGO_SIZE_PT = {
+  width: (2.41 * 72) / 2.54,
+  height: (2.94 * 72) / 2.54,
+};
+
+function arialFontPaths(): { regular: string; bold: string } {
+  const windowsFonts = join(process.env.WINDIR || 'C:/Windows', 'Fonts');
+  const regular =
+    process.env.REJECTION_LETTER_ARIAL_REGULAR_PATH ||
+    (process.platform === 'win32'
+      ? join(windowsFonts, 'arial.ttf')
+      : '/usr/share/fonts/truetype/msttcorefonts/Arial.ttf');
+  const bold =
+    process.env.REJECTION_LETTER_ARIAL_BOLD_PATH ||
+    (process.platform === 'win32'
+      ? join(windowsFonts, 'arialbd.ttf')
+      : '/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf');
+  if (!existsSync(regular) || !existsSync(bold)) {
+    throw new Error(
+      'Font Arial Regular/Bold wajib tersedia untuk surat penolakan',
+    );
+  }
+  return { regular, bold };
+}
+
+export function assertRejectionLetterFontsAvailable(): void {
+  arialFontPaths();
+}
 
 export interface RejectionLetterFinding {
   requirement: string;
@@ -18,6 +55,7 @@ export interface RejectionLetterDraftInput {
 
 export interface RejectionLetterDraft {
   institution: string;
+  institutionAddress?: string;
   title: string;
   number: string;
   subject: string;
@@ -31,6 +69,87 @@ export interface RejectionLetterDraft {
   disclaimer: string;
   closing: string;
   signatureLines: string[];
+  letterDate?: string;
+  verificationQrPng?: Buffer;
+  logoBuffer?: Buffer;
+  localTestPresentation?: boolean;
+  layoutConfig?: RejectionLetterLayoutConfig;
+}
+
+export interface RejectionLetterDetails {
+  letterNumber: string;
+  subject: string;
+  letterDate: string;
+  city: string;
+  institution: string;
+  signatoryName: string;
+  signatoryPosition: string;
+  signatoryIdentity?: string;
+}
+
+export function buildFinalRejectionLetter(
+  input: RejectionLetterDraftInput,
+  details: RejectionLetterDetails,
+): RejectionLetterDraft {
+  const letter = buildRejectionLetterDraft(input);
+  const company = clean(input.applicantOrganization, input.applicantName);
+  const date = new Intl.DateTimeFormat('id-ID', {
+    dateStyle: 'long',
+    timeZone: 'Asia/Jakarta',
+  }).format(new Date(`${details.letterDate}T00:00:00+07:00`));
+  return {
+    ...letter,
+    institution: details.institution.trim(),
+    number: details.letterNumber.trim(),
+    subject: details.subject.trim(),
+    letterDate: `${details.city.trim()}, ${date}`,
+    recipientLines: [
+      input.applicantOrganization?.trim() ? `Direktur ${company}` : company,
+      ...(input.applicantAddress?.trim()
+        ? [input.applicantAddress.trim()]
+        : []),
+      'di Tempat',
+    ],
+    body: [
+      `Menindaklanjuti permohonan dari ${company} dengan nomor registrasi ${letter.applicationNumber} perihal ${letter.applicationTitle} (${letter.applicationType}), bersama ini kami sampaikan bahwa permohonan Saudara ditolak berdasarkan hasil evaluasi ulang dokumen persyaratan.`,
+      letter.evaluationSummary,
+      `Kekurangan dokumen pendukung yang perlu dilengkapi:\n${letter.findings.map((finding, index) => `${index + 1}. ${finding.requirement}: ${finding.note}`).join('\n')}`,
+      'Saudara diminta untuk memperbarui permohonan yang dilengkapi dengan dokumen pendukung sesuai hasil evaluasi agar dapat kami proses sebagaimana mestinya.',
+    ].join('\n\n'),
+    disclaimer: '',
+    closing: 'Demikian kami sampaikan dan diucapkan terima kasih.',
+    signatureLines: [
+      `${details.city.trim()}, ${date}`,
+      details.signatoryPosition.trim(),
+      details.signatoryName.trim(),
+      details.signatoryIdentity?.trim() || '',
+    ],
+  };
+}
+
+export function buildLocalTestRejectionLetterPresentation(
+  letter: RejectionLetterDraft,
+): RejectionLetterDraft {
+  const recipient = letter.recipientLines[0]?.trim() || 'Pemohon';
+  const signatureLines = [...letter.signatureLines];
+  if (/rekomtek|rekomendasi teknis/i.test(signatureLines[1] ?? '')) {
+    signatureLines[1] = 'Pejabat yang Berwenang';
+  }
+  return {
+    ...letter,
+    title: 'SURAT PENOLAKAN',
+    subject: 'Penolakan Permohonan',
+    applicationNumber: '',
+    applicationTitle: '',
+    applicationType: '',
+    evaluationSummary: '',
+    findings: [],
+    body: `Menindaklanjuti permohonan dari ${recipient}, bersama ini disampaikan bahwa permohonan tersebut belum dapat disetujui.`,
+    disclaimer: '',
+    closing: 'Demikian disampaikan untuk menjadi perhatian.',
+    signatureLines,
+    localTestPresentation: true,
+  };
 }
 
 const DRAFT_INSTITUTION = '[NAMA INSTANSI / UNIT KERJA]';
@@ -120,19 +239,23 @@ export function buildRejectionLetterDraft(
       DRAFT_SIGNATORY,
       DRAFT_IDENTITY,
     ],
+    layoutConfig: resolveRejectionLetterLayoutConfig(undefined),
   };
 }
 
 function renderFindingList(
   document: PDFKit.PDFDocument,
   findings: RejectionLetterFinding[],
+  lineGapPt = 3,
+  alignment: 'left' | 'center' | 'right' | 'justify' = 'justify',
 ): void {
   if (findings.length === 0) {
     document.text(
       '1. [Tambahkan alasan penolakan berdasarkan hasil evaluasi ulang].',
       {
         indent: 12,
-        lineGap: 3,
+        lineGap: lineGapPt,
+        align: alignment,
       },
     );
     return;
@@ -142,24 +265,50 @@ function renderFindingList(
     document.text(`${index + 1}. ${finding.requirement}`, {
       indent: 12,
       continued: true,
-      lineGap: 3,
+      lineGap: lineGapPt,
+      align: alignment,
     });
-    document.text(`: ${finding.note}`, { lineGap: 3 });
+    document.text(`: ${finding.note}`, {
+      lineGap: lineGapPt,
+      align: alignment,
+    });
   });
+}
+
+export function shouldRenderRejectionFindingsSeparately(
+  body: string,
+  findings: RejectionLetterFinding[],
+): boolean {
+  return (
+    findings.length === 0 ||
+    findings.some(
+      (finding) => !body.includes(`${finding.requirement}: ${finding.note}`),
+    )
+  );
 }
 
 export function renderRejectionLetterPdf(
   draft: RejectionLetterDraft,
 ): Promise<Buffer> {
+  if (draft.disclaimer === 'PRATINJAU LOKAL') {
+    draft = buildLocalTestRejectionLetterPresentation(draft);
+  }
+  const layoutConfig = resolveRejectionLetterLayoutConfig(draft.layoutConfig);
+  const pdfLayout = getRejectionLetterPdfLayout(layoutConfig);
+  const fonts = arialFontPaths();
   return new Promise((resolve, reject) => {
     const document = new PDFDocument({
-      size: 'A4',
-      margins: { top: 52, right: 64, bottom: 56, left: 64 },
+      size: pdfLayout.size,
+      margins: pdfLayout.margins,
       info: {
         Title: draft.title,
         Subject: draft.subject,
         Author: 'SIPENGSUI',
-        Keywords: 'rekomtek, surat penolakan, draft',
+        Keywords: draft.localTestPresentation
+          ? 'surat penolakan, uji lokal'
+          : draft.disclaimer
+            ? 'rekomtek, surat penolakan, draft'
+            : 'rekomtek, surat penolakan',
       },
     });
     const chunks: Buffer[] = [];
@@ -167,69 +316,287 @@ export function renderRejectionLetterPdf(
     document.on('data', (chunk: Buffer) => chunks.push(chunk));
     document.on('end', () => resolve(Buffer.concat(chunks)));
     document.on('error', reject);
+    document.registerFont('Arial', fonts.regular);
+    document.registerFont('Arial-Bold', fonts.bold);
 
-    document
-      .fillColor('#8a1c1c')
-      .font('Helvetica-Bold')
-      .fontSize(9)
-      .text(draft.disclaimer, { align: 'center', lineGap: 2 });
-    document.moveDown(1.5);
+    if (draft.disclaimer) {
+      const isLocalPreview = draft.disclaimer === 'PRATINJAU LOKAL';
+      document
+        .fillColor(isLocalPreview ? '#64748b' : '#8a1c1c')
+        .font('Arial-Bold')
+        .fontSize(isLocalPreview ? 7 : 9)
+        .text(draft.disclaimer, {
+          align: isLocalPreview ? 'right' : 'center',
+          lineGap: 2,
+        });
+      document.moveDown(isLocalPreview ? 0.8 : 1.5);
+    }
 
-    document
-      .fillColor('#111827')
-      .font('Helvetica-Bold')
-      .fontSize(14)
-      .text(draft.institution, {
-        align: 'center',
-      });
-    document.moveDown(0.7);
-    document.fontSize(12).text(draft.title, { align: 'center' });
-    document.moveDown(0.5);
-    document
-      .strokeColor('#111827')
-      .lineWidth(0.8)
-      .moveTo(document.page.margins.left, document.y)
-      .lineTo(document.page.width - document.page.margins.right, document.y)
-      .stroke();
-    document.moveDown(1.2);
+    const left = document.page.margins.left;
+    const right = document.page.width - document.page.margins.right;
+    const alignmentFor = (block: RejectionLetterLayoutBlockId) => {
+      const alignment =
+        block === 'LETTERHEAD'
+          ? layoutConfig.headerAlignment
+          : (layoutConfig.blockAlignments[block] ?? 'LEFT');
+      return alignment.toLowerCase() as 'left' | 'center' | 'right' | 'justify';
+    };
 
-    document.font('Helvetica').fontSize(10.5).fillColor('#111827');
-    document.text(`Nomor    : ${draft.number}`);
-    document.text('Sifat       : Biasa');
-    document.text('Lampiran : -');
-    document.text(`Hal         : ${draft.subject}`);
-    document.moveDown(1.4);
+    const renderBlock = (block: RejectionLetterLayoutBlockId) => {
+      const alignment = alignmentFor(block);
+      if (block === 'LETTERHEAD') {
+        const headerTop = document.y;
+        const headerBottom =
+          headerTop + REJECTION_LETTER_LOGO_SIZE_PT.height + 8;
+        const logoOnLeft = layoutConfig.logoPosition === 'LEFT';
+        document.fillColor('#111111');
+        if (draft.logoBuffer) {
+          document.image(
+            draft.logoBuffer,
+            logoOnLeft ? left : right - REJECTION_LETTER_LOGO_SIZE_PT.width,
+            headerTop,
+            REJECTION_LETTER_LOGO_SIZE_PT,
+          );
+        }
+        const textX = draft.logoBuffer
+          ? logoOnLeft
+            ? left + REJECTION_LETTER_LOGO_SIZE_PT.width + 12
+            : left
+          : left;
+        const textWidth = draft.logoBuffer
+          ? right - left - REJECTION_LETTER_LOGO_SIZE_PT.width - 12
+          : right - left;
+        const isNorthSumatraAgency =
+          draft.institution.trim().toUpperCase() === 'DINAS SUMBER DAYA AIR';
+        if (isNorthSumatraAgency) {
+          document
+            .font('Arial-Bold')
+            .fontSize(11)
+            .text('PEMERINTAH PROVINSI SUMATERA UTARA', textX, headerTop + 3, {
+              width: textWidth,
+              align: alignment,
+              lineBreak: false,
+            });
+        }
+        document
+          .fillColor('#111111')
+          .font('Arial-Bold')
+          .fontSize(isNorthSumatraAgency ? 12 : 11)
+          .text(
+            draft.institution,
+            textX,
+            headerTop + (isNorthSumatraAgency ? 20 : 12),
+            { width: textWidth, align: alignment },
+          );
+        if (draft.institutionAddress?.trim()) {
+          const addressY = headerTop + (isNorthSumatraAgency ? 38 : 33);
+          document.font('Arial').fontSize(8);
+          if (
+            addressY +
+              document.heightOfString(draft.institutionAddress.trim(), {
+                width: textWidth,
+                lineGap: 1,
+              }) >
+            headerBottom - 3
+          ) {
+            throw new Error(
+              'Alamat kop surat terlalu panjang untuk area logo dan kop',
+            );
+          }
+          document.text(draft.institutionAddress.trim(), textX, addressY, {
+            width: textWidth,
+            align: alignment,
+            lineGap: 1,
+          });
+        }
+        document
+          .strokeColor('#111111')
+          .lineWidth(1.3)
+          .moveTo(left, headerBottom)
+          .lineTo(right, headerBottom)
+          .stroke();
+        document
+          .lineWidth(0.5)
+          .moveTo(left, headerBottom + 3)
+          .lineTo(right, headerBottom + 3)
+          .stroke();
+        document.y = headerBottom + 14;
+        return;
+      }
 
-    document.text('Yth.');
-    draft.recipientLines.forEach((line) => document.text(line));
-    document.moveDown(1.2);
-    document.text('Dengan hormat,');
-    document.moveDown(0.7);
+      if (block === 'TITLE') {
+        document
+          .font('Arial-Bold')
+          .fontSize(12)
+          .text(draft.title, { align: alignment });
+        document.moveDown(1.2);
+        return;
+      }
 
-    const paragraphs = draft.body.split('\n\n');
-    paragraphs.slice(0, 2).forEach((paragraph) => {
-      document.text(paragraph, { align: 'justify', lineGap: 3 });
-      document.moveDown(0.7);
-    });
+      if (block === 'DATE') {
+        if (draft.letterDate) {
+          document
+            .font('Arial')
+            .fontSize(layoutConfig.bodyFontSizePt)
+            .text(draft.letterDate, { align: alignment });
+        }
+        document.moveDown(0.8);
+        return;
+      }
 
-    document.font('Helvetica-Bold').text('Alasan penolakan');
-    document.moveDown(0.35);
-    document.font('Helvetica');
-    renderFindingList(document, draft.findings);
-    document.moveDown(0.8);
+      if (block === 'LETTER_META') {
+        document.font('Arial').fontSize(layoutConfig.bodyFontSizePt);
+        document.text(`Nomor    : ${draft.number}`, { align: alignment });
+        document.text('Sifat       : Biasa', { align: alignment });
+        document.text('Lampiran : -', { align: alignment });
+        document.text(`Hal         : ${draft.subject}`, { align: alignment });
+        document.moveDown(0.9);
+        return;
+      }
 
-    paragraphs.slice(3).forEach((paragraph) => {
-      document.text(paragraph, { align: 'justify', lineGap: 3 });
-      document.moveDown(0.7);
-    });
+      if (block === 'RECIPIENT') {
+        document.font('Arial').fontSize(layoutConfig.bodyFontSizePt);
+        document.text('Yth.', { align: alignment });
+        draft.recipientLines.forEach((line) =>
+          document.text(line, { align: alignment }),
+        );
+        document.moveDown(0.9);
+        document.text('Dengan hormat,', { align: alignment });
+        document.moveDown(0.7);
+        return;
+      }
 
-    document.text(draft.closing, { align: 'justify', lineGap: 3 });
-    document.moveDown(2.2);
-    document.text(draft.signatureLines[0], { align: 'right' });
-    document.moveDown(2.8);
-    document.text(draft.signatureLines[1], { align: 'right' });
-    document.text(draft.signatureLines[2], { align: 'right' });
-    document.text(draft.signatureLines[3], { align: 'right' });
+      if (block === 'BODY') {
+        document
+          .font('Arial')
+          .fontSize(layoutConfig.bodyFontSizePt)
+          .fillColor('#111111');
+        draft.body.split('\n\n').forEach((paragraph) => {
+          document.text(paragraph, {
+            align: alignment,
+            lineGap: layoutConfig.bodyLineGapPt,
+          });
+          document.moveDown(
+            layoutConfig.paragraphSpacingPt / layoutConfig.bodyFontSizePt,
+          );
+        });
+        if (
+          !draft.localTestPresentation &&
+          shouldRenderRejectionFindingsSeparately(draft.body, draft.findings)
+        ) {
+          document
+            .font('Arial-Bold')
+            .text('Alasan penolakan', { align: alignment });
+          document.moveDown(0.35);
+          document.font('Arial');
+          renderFindingList(
+            document,
+            draft.findings,
+            layoutConfig.bodyLineGapPt,
+            alignment,
+          );
+          document.moveDown(0.8);
+        }
+        return;
+      }
+
+      if (block === 'CLOSING') {
+        document
+          .font('Arial')
+          .fontSize(layoutConfig.bodyFontSizePt)
+          .text(draft.closing, {
+            align: alignment,
+            lineGap: layoutConfig.bodyLineGapPt,
+          });
+        document.moveDown(0.8);
+        return;
+      }
+
+      const signatureHeight = draft.verificationQrPng ? 160 : 105;
+      if (
+        document.y + signatureHeight >
+        document.page.height - document.page.margins.bottom
+      ) {
+        document.addPage();
+      }
+      const signatureWidth = Math.min(230, right - left);
+      const signatureX =
+        alignment === 'left'
+          ? left
+          : alignment === 'center'
+            ? left + (right - left - signatureWidth) / 2
+            : right - signatureWidth;
+      const signatureY = document.y;
+      if (draft.verificationQrPng) {
+        document
+          .font('Arial-Bold')
+          .fontSize(9.5)
+          .text(draft.signatureLines[1], signatureX, signatureY, {
+            width: signatureWidth,
+            align: alignment,
+          });
+        const qrY = Math.max(signatureY + 16, document.y + 4);
+        document.image(draft.verificationQrPng, signatureX + 5, qrY, {
+          width: 90,
+          height: 90,
+        });
+        document
+          .font('Arial-Bold')
+          .fontSize(10)
+          .text(draft.signatureLines[2], signatureX + 40, qrY + 92, {
+            width: signatureWidth - 40,
+            align: alignment,
+          });
+        const identity = draft.signatureLines[3].trim();
+        if (identity) {
+          document
+            .font('Arial')
+            .fontSize(9)
+            .text(
+              /^\d[\d\s]*$/.test(identity) ? `NIP. ${identity}` : identity,
+              signatureX + 40,
+              document.y + 3,
+              { width: signatureWidth - 40, align: alignment },
+            );
+        }
+        document
+          .font('Arial')
+          .fontSize(7)
+          .text(
+            'Pindai QR untuk memeriksa status dokumen',
+            signatureX,
+            Math.max(qrY + 132, document.y + 8),
+            { width: signatureWidth, align: alignment },
+          );
+      } else {
+        if (!draft.letterDate)
+          document.text(draft.signatureLines[0], signatureX, signatureY, {
+            width: signatureWidth,
+            align: alignment,
+          });
+        document
+          .font('Arial')
+          .text(draft.signatureLines[1], signatureX, document.y, {
+            width: signatureWidth,
+            align: alignment,
+          });
+        document.moveDown(2.8);
+        document
+          .font('Arial-Bold')
+          .text(draft.signatureLines[2], signatureX, document.y, {
+            width: signatureWidth,
+            align: alignment,
+          });
+        document
+          .font('Arial')
+          .text(draft.signatureLines[3], signatureX, document.y, {
+            width: signatureWidth,
+            align: alignment,
+          });
+      }
+    };
+
+    for (const block of layoutConfig.blockOrder) renderBlock(block);
 
     document.end();
   });
@@ -241,5 +608,5 @@ export function rejectionLetterFileName(applicationNumber: string): string {
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
-  return `${normalized || 'rekomtek'}-draft-surat-penolakan.pdf`;
+  return `${normalized || 'rekomtek'}-surat-penolakan.pdf`;
 }

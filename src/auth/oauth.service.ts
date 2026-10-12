@@ -254,6 +254,8 @@ export class OAuthService {
           data: permissions.map((permission) => ({
             userId: createdUser.id,
             permissionId: permission.id,
+            manualGrant: false,
+            sourceRoleIds: [userRole.id],
           })),
           skipDuplicates: true,
         });

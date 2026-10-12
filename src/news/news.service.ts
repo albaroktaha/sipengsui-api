@@ -22,7 +22,9 @@ import { PublicNewsQueryDto, QueryNewsDto } from './dto/query-news.dto';
 import { sanitizeNewsHtml } from './news-html';
 
 const listInclude = {
-  author: { select: { id: true, firstName: true, lastName: true, email: true } },
+  author: {
+    select: { id: true, firstName: true, lastName: true, email: true },
+  },
   category: true,
   tags: { include: { tag: true } },
 } as const;

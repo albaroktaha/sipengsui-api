@@ -103,6 +103,16 @@ const ALL_PERMISSIONS = [
     group: 'rekomtek',
   },
   {
+    slug: 'rekomtek.checklist-template.manage',
+    name: 'Kelola Template Checklist Rekomtek',
+    group: 'rekomtek',
+  },
+  {
+    slug: 'rekomtek.rejection-letter.manage',
+    name: 'Kelola Pengaturan Surat Penolakan',
+    group: 'rekomtek',
+  },
+  {
     slug: 'rekomtek.workflow.read',
     name: 'Lihat antrean dan audit workflow Rekomtek',
     group: 'rekomtek',
@@ -354,12 +364,15 @@ async function main() {
     },
     select: { id: true },
   });
-  const newsPermissionSlugs = ALL_PERMISSIONS.filter(
-    (permission) => permission.group === 'news',
-  ).map((permission) => permission.slug);
+  const adminPermissionSlugs = [
+    ...ALL_PERMISSIONS.filter((permission) => permission.group === 'news').map(
+      (permission) => permission.slug,
+    ),
+    'rekomtek.rejection-letter.manage',
+  ];
 
   for (const adminUser of adminUsers) {
-    for (const slug of newsPermissionSlugs) {
+    for (const slug of adminPermissionSlugs) {
       await prisma.userPermission.upsert({
         where: {
           userId_permissionId: {
@@ -376,7 +389,7 @@ async function main() {
     }
   }
 
-  console.log(`Admin news permissions synced for ${adminUsers.length} user(s)`);
+  console.log(`Admin permissions synced for ${adminUsers.length} user(s)`);
 
   const workflowReaderUsers = await prisma.user.findMany({
     where: {
@@ -747,7 +760,7 @@ async function main() {
     jenisPermohonan: string,
     items: BerkasTemplate[],
   ) {
-    // Upsert existing — cari by unique composite
+    // Hanya tambahkan default yang belum ada; template existing dikelola admin.
     const existing = await prisma.rekomtekBerkasTemplate.findMany({
       where: { jenis, jenisPermohonan: jenisPermohonan as any },
     });
@@ -783,31 +796,22 @@ async function main() {
             : ['pdf'],
       };
       const existingItem = existingMap.get(item.kode);
-      if (existingItem) {
-        await prisma.rekomtekBerkasTemplate.update({
-          where: { id: existingItem.id },
-          data: {
-            nomorUrut: item.nomorUrut,
-            uraian: item.uraian,
-            isRequired: item.isRequired,
-            hasSubItems: item.hasSubItems,
-            ...sourcePolicy,
-          },
-        });
-      } else {
-        await prisma.rekomtekBerkasTemplate.create({
-          data: {
-            jenis,
-            jenisPermohonan: jenisPermohonan as any,
-            kode: item.kode,
-            nomorUrut: item.nomorUrut,
-            uraian: item.uraian,
-            isRequired: item.isRequired,
-            hasSubItems: item.hasSubItems,
-            ...sourcePolicy,
-          },
-        });
-      }
+      // Template database adalah sumber kebenaran setelah bootstrap. Jangan
+      // menimpa perubahan admin atau menghidupkan kembali template yang diarsipkan.
+      if (existingItem) continue;
+
+      await prisma.rekomtekBerkasTemplate.create({
+        data: {
+          jenis,
+          jenisPermohonan: jenisPermohonan as any,
+          kode: item.kode,
+          nomorUrut: item.nomorUrut,
+          uraian: item.uraian,
+          isRequired: item.isRequired,
+          hasSubItems: item.hasSubItems,
+          ...sourcePolicy,
+        },
+      });
     }
     console.log(`  ✅ ${jenis} / ${jenisPermohonan} — ${items.length} item`);
   }

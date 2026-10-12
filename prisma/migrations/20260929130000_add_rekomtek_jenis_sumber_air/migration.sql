@@ -1,0 +1,12 @@
+CREATE TYPE "JenisSumberAir" AS ENUM (
+  'SUNGAI',
+  'DANAU',
+  'EMBUNG',
+  'SALURAN_IRIGASI',
+  'SALURAN_ALAMI_PEMBUANG',
+  'MATA_AIR',
+  'TAMPUNGAN_LAINNYA'
+);
+
+ALTER TABLE "Rekomtek"
+ADD COLUMN "jenisSumberAir" "JenisSumberAir";

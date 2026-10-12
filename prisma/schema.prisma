@@ -16,6 +16,7 @@ enum RoleType {
   SUPER_ADMIN
   ADMIN
   PETUGAS
+  PETUGAS_PETA
   PIMPINAN
   USER
 }
@@ -40,6 +41,17 @@ enum ImportType {
 enum JenisPermohonan {
   IZIN_BARU
   PERPANJANGAN
+  PERSETUJUAN_TEKNIS
+}
+
+enum JenisSumberAir {
+  SUNGAI
+  DANAU
+  EMBUNG
+  SALURAN_IRIGASI
+  SALURAN_ALAMI_PEMBUANG
+  MATA_AIR
+  TAMPUNGAN_LAINNYA
 }
 
 enum RekomtekStatus {
@@ -133,6 +145,24 @@ enum RekomtekArtifactType {
 enum RekomtekArtifactStatus {
   DRAFT
   FINAL
+}
+
+enum RejectionLetterJobStatus {
+  WAITING_APPROVAL
+  APPROVED_PREPARING
+  BLOCKED_TTE
+  ISSUED
+  CANCELLED
+  FAILED
+}
+
+enum RejectionLetterIssuanceMethod {
+  HEAD_APPROVAL_QR
+}
+
+enum RejectionLetterNumberResetRule {
+  TAHUNAN
+  TIDAK_PERNAH
 }
 
 enum WhatsAppIdentityStatus {
@@ -260,6 +290,18 @@ enum NewsStatus {
   ARCHIVED
 }
 
+enum DashboardNotificationSeverity {
+  INFO
+  WARNING
+  URGENT
+}
+
+enum DashboardNotificationStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model Rekomtek {
   id String @id @default(uuid())
 
@@ -298,6 +340,7 @@ model Rekomtek {
   // ===========================
 
   jenisPermohonan JenisPermohonan @default(IZIN_BARU)
+  jenisSumberAir  JenisSumberAir?
 
   // ===========================
   // Referensi Geografis
@@ -316,6 +359,9 @@ model Rekomtek {
 
   riverRegionId String?
   riverRegion   RiverRegion? @relation(fields: [riverRegionId], references: [id], onDelete: SetNull)
+
+  latitude  Decimal? @db.Decimal(10, 8)
+  longitude Decimal? @db.Decimal(11, 8)
 
   // ===========================
   // Data Analisis
@@ -341,6 +387,7 @@ model Rekomtek {
   fieldVisits     RekomtekFieldVisit[]
   councilSessions RekomtekCouncilSession[]
   artifacts       RekomtekArtifact[]
+  rejectionLetterJobs RejectionLetterJob[]
   workflowEvents  RekomtekWorkflowEvent[]
   notifications   RekomtekNotification[]
 
@@ -413,10 +460,15 @@ model User {
 
   // Rekomtek yang diajukan user
   rekomteks Rekomtek[]
+  rejectionLetterSignerSettings RejectionLetterSettings[]
 
   // Berita yang ditulis dan revisinya
   newsArticles  NewsArticle[]         @relation("NewsArticleAuthor")
   newsRevisions NewsArticleRevision[] @relation("NewsRevisionAuthor")
+
+  createdDashboardNotifications DashboardNotification[] @relation("DashboardNotificationCreator")
+  updatedDashboardNotifications DashboardNotification[] @relation("DashboardNotificationUpdater")
+  dashboardNotificationReceipts DashboardNotificationRecipient[]
 
   // Email verification & password reset
   emailVerificationTokens EmailVerificationToken[]
@@ -485,6 +537,8 @@ model UserPermission {
 
   userId       String
   permissionId String
+  manualGrant  Boolean  @default(true)
+  sourceRoleIds String[] @default([])
 
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
@@ -871,9 +925,10 @@ model RekomtekBerkasTemplate {
   // Identitas item
   kode        String // "1", "12.a", "12.b" — untuk display & grouping
   nomorUrut   Int // untuk sorting
-  uraian      String // Nama berkas / deskripsi
-  isRequired  Boolean @default(true)
+  uraian     String // Nama berkas / deskripsi
+  isRequired Boolean @default(true)
   hasSubItems Boolean @default(false)
+  isActive   Boolean @default(true)
 
   // Kebijakan sumber dan validasi per item
   allowedSourceTypes   Json   @default("[\"GOOGLE_DRIVE\"]")
@@ -1028,6 +1083,7 @@ model RekomtekReviewRound {
   closedAt    DateTime?
 
   findings RekomtekReviewFinding[]
+  rejectionLetterJobs RejectionLetterJob[]
 
   @@unique([rekomtekId, type, roundNumber])
   @@index([rekomtekId, type, openedAt])
@@ -1193,6 +1249,46 @@ model RekomtekNotification {
   @@index([rekomtekId, createdAt])
 }
 
+model DashboardNotification {
+  id String @id @default(uuid())
+
+  title       String
+  message     String   @db.Text
+  severity    DashboardNotificationSeverity @default(INFO)
+  targetRoles String[] @default([])
+  status      DashboardNotificationStatus @default(DRAFT)
+  publishedAt DateTime?
+  expiresAt   DateTime?
+
+  createdById String
+  createdBy   User   @relation("DashboardNotificationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedById String?
+  updatedBy   User?  @relation("DashboardNotificationUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  recipients DashboardNotificationRecipient[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, publishedAt])
+  @@index([expiresAt])
+}
+
+model DashboardNotificationRecipient {
+  id String @id @default(uuid())
+
+  notificationId String
+  notification   DashboardNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveredAt    DateTime @default(now())
+  readAt         DateTime?
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt, deliveredAt])
+  @@index([notificationId, deliveredAt])
+}
+
 // ===========================
 // Flowchart (Alur Publik)
 // ===========================
@@ -1222,6 +1318,13 @@ model Flowchart {
 // Peta GIS (upload .kmz/.kml)
 // ===========================
 
+enum GisMapVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  ARCHIVED
+}
+
 model GisMap {
   id          String  @id @default(uuid())
   name        String
@@ -1236,9 +1339,22 @@ model GisMap {
   // Hasil konversi KMZ/KML → GeoJSON FeatureCollection (untuk viewer)
   geometry    Json?
   hasGeometry Boolean @default(false)
+  versionCounter Int @default(0)
+
+  // Sumber dan mutu data; nilai yang belum diketahui tetap null.
+  sourceOrganization String?
+  surveyDate          DateTime?
+  accuracyMeters      Decimal? @db.Decimal(12, 3)
+  sourceCrs           String?
+  outputCrs           String   @default("EPSG:4326")
+  license             String?
+  coverage            String?
+  qualityNotes        String?  @db.Text
 
   status      Boolean   @default(true)
   publishedAt DateTime?
+
+  versions GisMapVersion[]
 
   sourceRiverRegions RiverRegion[] @relation("RiverRegionSourceMap")
   sourceWatersheds   Watershed[]   @relation("WatershedSourceMap")
@@ -1249,6 +1365,28 @@ model GisMap {
 
   @@index([category])
   @@index([status, publishedAt])
+}
+
+model GisMapVersion {
+  id                 String              @id @default(uuid())
+  mapId              String
+  map                GisMap              @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  version            Int
+  fileUrl            String
+  fileName           String
+  fileSize           Int
+  checksum           String?
+  geometry           Json
+  validationReport   Json
+  metadata           Json?
+  status             GisMapVersionStatus @default(DRAFT)
+  createdById        String?
+  createdAt          DateTime            @default(now())
+  publishedAt        DateTime?
+
+  @@unique([mapId, version])
+  @@index([mapId, status, version])
+  @@index([checksum])
 }
 
 // ===========================
@@ -1645,4 +1783,115 @@ model NewsSlugRedirect {
   createdAt DateTime @default(now())
 
   @@index([articleId])
+}
+
+model RejectionLetterSettings {
+  id                       String                         @id @default("default")
+  institutionName          String?
+  institutionAddress       String?                        @db.Text
+  issueCity                String?
+  logoDataUrl              String?                        @db.Text
+  verificationDomain       String?
+  outgoingNumberFormat     String?
+  classificationCode       String?
+  agendaSource             String?
+  agendaScope              String?
+  initialLastNumber        Int?
+  numberResetRule          RejectionLetterNumberResetRule?
+  activeHeadUserId         String?
+  activeHeadUser           User?                          @relation(fields: [activeHeadUserId], references: [id], onDelete: SetNull)
+  activeHeadName           String?
+  activeHeadPosition       String?
+  activeHeadNip            String?
+  authorityStartsAt        DateTime?
+  authorityEndsAt          DateTime?
+  certificateIdentity      String?
+  version                  Int                            @default(1)
+  updatedById              String?
+  createdAt                DateTime                       @default(now())
+  updatedAt                DateTime                       @updatedAt
+}
+
+model RejectionLetterTemplate {
+  id               String          @id @default(uuid())
+  rekomtekType     String
+  jenisPermohonan  JenisPermohonan
+  version          Int
+  subjectTemplate  String           @db.Text
+  bodyTemplate     String           @db.Text
+  closingTemplate  String           @db.Text
+  layoutConfig     Json             @default("{\"pageSize\":\"A4\",\"marginTopMm\":18.344,\"marginRightMm\":22.578,\"marginBottomMm\":19.756,\"marginLeftMm\":22.578,\"bodyFontSizePt\":10,\"bodyLineGapPt\":2,\"paragraphSpacingPt\":4,\"headerAlignment\":\"CENTER\",\"logoPosition\":\"LEFT\",\"blockOrder\":[\"LETTERHEAD\",\"TITLE\",\"LETTER_META\",\"RECIPIENT\",\"BODY\",\"CLOSING\",\"DATE\",\"SIGNATURE\"],\"blockAlignments\":{\"TITLE\":\"CENTER\",\"DATE\":\"RIGHT\",\"LETTER_META\":\"LEFT\",\"RECIPIENT\":\"LEFT\",\"BODY\":\"JUSTIFY\",\"CLOSING\":\"JUSTIFY\",\"SIGNATURE\":\"RIGHT\"}}")
+  isActive         Boolean          @default(true)
+  createdById      String
+  createdAt        DateTime         @default(now())
+
+  @@unique([rekomtekType, jenisPermohonan, version])
+  @@index([rekomtekType, jenisPermohonan, isActive, version])
+}
+
+model RejectionLetterNumberSequence {
+  id          String   @id @default(uuid())
+  agendaScope String
+  periodKey   String
+  lastNumber  Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([agendaScope, periodKey])
+}
+
+model RejectionLetterJob {
+  id                    String                  @id @default(uuid())
+  rekomtekId            String
+  rekomtek              Rekomtek                @relation(fields: [rekomtekId], references: [id], onDelete: Cascade)
+  evaluationRoundId     String
+  evaluationRound       RekomtekReviewRound     @relation(fields: [evaluationRoundId], references: [id], onDelete: Restrict)
+  status                RejectionLetterJobStatus @default(WAITING_APPROVAL)
+  issuanceMethod        RejectionLetterIssuanceMethod?
+  isTestOnly            Boolean                 @default(false)
+  applicantSnapshot     Json?
+  evaluationSnapshot    Json?
+  settingsSnapshot      Json?
+  templateSnapshot      Json?
+  signerSnapshot        Json?
+  approvalSnapshot      Json?
+  outgoingNumber        String?                 @unique
+  outgoingDate          DateTime?
+  verificationTokenHash String?                 @unique
+  approvedById          String?
+  approvedAt            DateTime?
+  issuedAt              DateTime?
+  preparedPdfStorageKey String?
+  preparedPdfChecksum   String?
+  finalPdfChecksum      String?
+  signatureVerified     Boolean                 @default(false)
+  processingLeaseUntil  DateTime?
+  processingAttempts    Int                     @default(0)
+  retryAt               DateTime?
+  failureReason         String?                 @db.Text
+  finalPdfStorageKey    String?
+  createdById           String
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  events                RejectionLetterJobEvent[]
+
+  @@unique([rekomtekId, evaluationRoundId])
+  @@index([status, retryAt, createdAt])
+  @@index([rekomtekId, createdAt])
+  @@index([issuanceMethod, status])
+}
+
+model RejectionLetterJobEvent {
+  id         String                 @id @default(uuid())
+  jobId      String
+  job        RejectionLetterJob     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  action     String
+  fromStatus RejectionLetterJobStatus?
+  toStatus   RejectionLetterJobStatus
+  actorId    String?
+  actorRole  String?
+  metadata   Json?
+  createdAt  DateTime               @default(now())
+
+  @@index([jobId, createdAt])
 }

@@ -215,6 +215,7 @@ export class PrismaKnowledgeService implements KnowledgeRetriever {
 
     // Template berkas rekomtek (kelompok per jenis + jenisPermohonan).
     const templates = await this.prisma.rekomtekBerkasTemplate.findMany({
+      where: { isActive: true },
       orderBy: [
         { jenis: 'asc' },
         { jenisPermohonan: 'asc' },

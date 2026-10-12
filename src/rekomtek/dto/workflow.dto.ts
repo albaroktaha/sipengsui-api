@@ -121,6 +121,59 @@ export class EvaluateInitialRecheckDto {
   summary?: string;
 }
 
+export class IssueRejectionLetterDto {
+  @ApiProperty({ description: 'Nomor surat keluar resmi dari petugas' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  letterNumber!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  subject!: string;
+
+  @ApiProperty({ description: 'Tanggal surat, YYYY-MM-DD' })
+  @IsDateString({ strict: true })
+  letterDate!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  city!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  institution!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  signatoryName!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  signatoryPosition!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  signatoryIdentity?: string;
+
+  @ApiProperty({ description: 'Versi workflow yang sedang diperiksa' })
+  @IsInt()
+  @Min(0)
+  expectedWorkflowVersion!: number;
+}
+
 export class ExternalExposeParticipantDto {
   @ApiProperty({ description: 'Nama peserta dari instansi/OPD eksternal' })
   @IsString()

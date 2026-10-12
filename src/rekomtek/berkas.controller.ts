@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -21,6 +22,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/decorators/current-user.decorator';
 
 import { BerkasTemplateService } from './berkas-template.service';
+import { ChecklistTemplateManagementGuard } from './guards/checklist-template-management.guard';
 import { BerkasService } from './berkas.service';
 import { RekomtekService } from './rekomtek.service';
 import { RekomtekWorkflowService } from './rekomtek-workflow.service';
@@ -28,7 +30,9 @@ import {
   UpdateBerkasDto,
   UpdateBerkasIsCompleteDto,
   BerkasQueryDto,
+  CreateBerkasTemplateDto,
   ReturnForRevisionDto,
+  UpdateBerkasTemplateDto,
 } from './dto/berkas.dto';
 
 @ApiTags('Rekomtek - Berkas')
@@ -45,6 +49,13 @@ export class BerkasController {
 
   // ── Template ───────────────────────────────────────────────
 
+  @Get('berkas/templates/manage')
+  @UseGuards(ChecklistTemplateManagementGuard)
+  @ApiOperation({ summary: 'Daftar template checklist untuk pengelola' })
+  getManagedTemplates(@CurrentUser() user: AuthenticatedUser) {
+    return this.berkasTemplateService.getManagedTemplates(user);
+  }
+
   @Get('berkas/templates')
   @Permissions('rekomtek.read')
   @ApiOperation({
@@ -59,6 +70,39 @@ export class BerkasController {
       );
     }
     return this.berkasTemplateService.getAllTemplates();
+  }
+
+  @Post('berkas/templates')
+  @UseGuards(ChecklistTemplateManagementGuard)
+  @ApiOperation({ summary: 'Tambah template Berkas Persyaratan' })
+  createTemplate(
+    @Body() dto: CreateBerkasTemplateDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.berkasTemplateService.createTemplate(dto, user);
+  }
+
+  @Patch('berkas/templates/:templateId')
+  @UseGuards(ChecklistTemplateManagementGuard)
+  @ApiOperation({ summary: 'Ubah template Berkas Persyaratan' })
+  updateTemplate(
+    @Param('templateId') templateId: string,
+    @Body() dto: UpdateBerkasTemplateDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.berkasTemplateService.updateTemplate(templateId, dto, user);
+  }
+
+  @Delete('berkas/templates/:templateId')
+  @UseGuards(ChecklistTemplateManagementGuard)
+  @ApiOperation({
+    summary: 'Arsipkan template checklist tanpa menghapus checklist lama',
+  })
+  archiveTemplate(
+    @Param('templateId') templateId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.berkasTemplateService.archiveTemplate(templateId, user);
   }
 
   // ── Berkas per Rekomtek ────────────────────────────────────

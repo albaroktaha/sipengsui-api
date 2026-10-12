@@ -1,5 +1,26 @@
-import { PartialType } from '@nestjs/swagger';
+import { ApiPropertyOptional, OmitType, PartialType } from '@nestjs/swagger';
+import { IsIn, IsOptional, IsString } from 'class-validator';
 
-import { CreateRekomtekDto } from './create-rekomtek.dto';
+import {
+  CreateRekomtekDto,
+  LEGACY_REKOMTEK_JENIS_OPTIONS,
+  REKOMTEK_JENIS_OPTIONS,
+} from './create-rekomtek.dto';
 
-export class UpdateRekomtekDto extends PartialType(CreateRekomtekDto) {}
+const updateJenisOptions = [
+  ...REKOMTEK_JENIS_OPTIONS,
+  ...LEGACY_REKOMTEK_JENIS_OPTIONS,
+] as const;
+
+export class UpdateRekomtekDto extends PartialType(
+  OmitType(CreateRekomtekDto, ['jenis'] as const),
+) {
+  @ApiPropertyOptional({
+    description: 'Jenis rekomendasi teknis',
+    enum: updateJenisOptions,
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(updateJenisOptions)
+  jenis?: string;
+}

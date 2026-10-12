@@ -4,6 +4,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { GIS_MASTER_GEOMETRY_TYPES } from '../gis/gis-geometry.validator';
+import { assertGeoJsonGeometry } from '../gis/gis-geometry.policy';
 
 import { CreateWatershedDto } from './dto/create-watershed.dto';
 import { UpdateWatershedDto } from './dto/update-watershed.dto';
@@ -13,6 +15,11 @@ export class WatershedsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateWatershedDto) {
+    assertGeoJsonGeometry(
+      dto.geometry,
+      GIS_MASTER_GEOMETRY_TYPES.WATERSHED,
+      'DAS',
+    );
     return this.prisma.watershed.create({
       data: dto,
       include: {
@@ -51,6 +58,13 @@ export class WatershedsService {
 
   async update(id: string, dto: UpdateWatershedDto) {
     await this.findOne(id);
+    if (dto.geometry !== undefined) {
+      assertGeoJsonGeometry(
+        dto.geometry,
+        GIS_MASTER_GEOMETRY_TYPES.WATERSHED,
+        'DAS',
+      );
+    }
 
     return this.prisma.watershed.update({
       where: { id },

@@ -5,10 +5,9 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { join } from 'path';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { json, raw, urlencoded } from 'express';
-import type { Request } from 'express';
-
-type RawBodyRequest = Request & { rawBody?: Buffer };
+import type { NextFunction, Request, Response } from 'express';
+import { isPrivateGisMapAssetRequest } from './gis/gis-static-assets.policy';
+import { configureApiBodyParsers } from './http-body-parsers';
 
 function resolveTrustProxy(value: string | undefined): boolean | number {
   const normalized = value?.trim().toLowerCase();
@@ -26,28 +25,7 @@ async function bootstrap() {
     bodyParser: false,
   });
 
-  const webhookBodyLimit = Number.parseInt(
-    process.env.WHATSAPP_WEBHOOK_MAX_BODY_BYTES ?? '262144',
-    10,
-  );
-  const jsonLimit =
-    Number.isInteger(webhookBodyLimit) && webhookBodyLimit > 0
-      ? webhookBodyLimit
-      : 262_144;
-  app.use(
-    '/whatsapp/webhook',
-    raw({
-      type: 'application/json',
-      limit: jsonLimit,
-      verify: (request, _response, rawBody) => {
-        (request as RawBodyRequest).rawBody = Buffer.from(rawBody);
-      },
-    }),
-  );
-  // Parser umum memakai default Nest/body-parser. Limit webhook tidak boleh
-  // membatasi JSON endpoint lain atau payload streaming yang sudah ada.
-  app.use(json());
-  app.use(urlencoded({ extended: true }));
+  configureApiBodyParsers(app.getHttpAdapter().getInstance());
 
   // Express harus mengetahui jumlah reverse proxy agar throttler tidak
   // menganggap seluruh pengguna production berasal dari satu alamat proxy.
@@ -64,6 +42,12 @@ async function bootstrap() {
   });
 
   // Serve uploaded files
+  app.use((request: Request, response: Response, next: NextFunction) => {
+    if (isPrivateGisMapAssetRequest(request.path)) {
+      return response.sendStatus(404);
+    }
+    next();
+  });
   app.useStaticAssets(join(process.cwd(), 'uploads'), {
     prefix: '/uploads',
   });

@@ -18,6 +18,15 @@ describe('RekomtekService', () => {
     rekomtekWorkflowEvent: {
       create: jest.fn(),
     },
+    riverRegion: {
+      findMany: jest.fn(),
+    },
+    watershed: {
+      findMany: jest.fn(),
+    },
+    river: {
+      findMany: jest.fn(),
+    },
   } as never;
   const berkasService = {
     generateFromTemplate: jest.fn(),
@@ -34,11 +43,212 @@ describe('RekomtekService', () => {
     });
   });
 
+  it('resolves a selected point to its WS, DAS, and nearby river', async () => {
+    const polygon = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [106.7, -6.3],
+          [106.9, -6.3],
+          [106.9, -6.1],
+          [106.7, -6.1],
+          [106.7, -6.3],
+        ],
+      ],
+    };
+    (prisma.riverRegion.findMany as jest.Mock).mockResolvedValue([
+      { id: 'ws-1', name: 'Wilayah Sungai Contoh', geometry: polygon },
+    ]);
+    (prisma.watershed.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 'das-1',
+        name: 'DAS Contoh',
+        riverRegionId: 'ws-1',
+        area: 120,
+        geometry: polygon,
+      },
+    ]);
+    (prisma.river.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 'river-1',
+        name: 'Sungai Contoh',
+        watershedId: 'das-1',
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [106.8, -6.3],
+            [106.8, -6.1],
+          ],
+        },
+      },
+    ]);
+
+    const lookup = service as unknown as {
+      resolveGeographicReference(
+        query: { latitude: number; longitude: number },
+        user: {
+          userId: string;
+          role: string;
+          roles: string[];
+          permissions: string[];
+        },
+      ): Promise<unknown>;
+    };
+
+    await expect(
+      lookup.resolveGeographicReference(
+        { latitude: -6.2, longitude: 106.8 },
+        {
+          userId: 'user-1',
+          role: 'USER',
+          roles: ['USER'],
+          permissions: ['rekomtek.create'],
+        },
+      ),
+    ).resolves.toMatchObject({
+      riverRegion: { id: 'ws-1', name: 'Wilayah Sungai Contoh' },
+      watershed: {
+        id: 'das-1',
+        name: 'DAS Contoh',
+        riverRegionId: 'ws-1',
+      },
+      river: { id: 'river-1', name: 'Sungai Contoh', watershedId: 'das-1' },
+    });
+  });
+
+  it('leaves river unmatched when no database line is near the selected point', async () => {
+    const polygon = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [106.7, -6.3],
+          [106.9, -6.3],
+          [106.9, -6.1],
+          [106.7, -6.1],
+          [106.7, -6.3],
+        ],
+      ],
+    };
+    (prisma.riverRegion.findMany as jest.Mock).mockResolvedValue([
+      { id: 'ws-1', name: 'Wilayah Sungai Contoh', geometry: polygon },
+    ]);
+    (prisma.watershed.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 'das-1',
+        name: 'DAS Contoh',
+        riverRegionId: 'ws-1',
+        area: 120,
+        geometry: polygon,
+      },
+    ]);
+    (prisma.river.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 'river-1',
+        name: 'Sungai Jauh',
+        watershedId: 'das-1',
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [106.805, -6.3],
+            [106.805, -6.1],
+          ],
+        },
+      },
+    ]);
+
+    const lookup = service as unknown as {
+      resolveGeographicReference(
+        query: { latitude: number; longitude: number },
+        user: {
+          userId: string;
+          role: string;
+          roles: string[];
+          permissions: string[];
+        },
+      ): Promise<unknown>;
+    };
+
+    await expect(
+      lookup.resolveGeographicReference(
+        { latitude: -6.2, longitude: 106.8 },
+        {
+          userId: 'user-1',
+          role: 'USER',
+          roles: ['USER'],
+          permissions: ['rekomtek.create'],
+        },
+      ),
+    ).resolves.toMatchObject({
+      riverRegion: { id: 'ws-1' },
+      watershed: { id: 'das-1' },
+      river: null,
+    });
+  });
+
+  it('denies geographic lookup to petugas-only users', async () => {
+    (prisma.riverRegion.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.watershed.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.river.findMany as jest.Mock).mockResolvedValue([]);
+    const lookup = service as unknown as {
+      resolveGeographicReference(
+        query: { latitude: number; longitude: number },
+        user: {
+          userId: string;
+          role: string;
+          roles: string[];
+          permissions: string[];
+        },
+      ): Promise<unknown>;
+    };
+
+    await expect(
+      lookup.resolveGeographicReference(
+        { latitude: -6.2, longitude: 106.8 },
+        {
+          userId: 'petugas-1',
+          role: 'PETUGAS',
+          roles: ['PETUGAS'],
+          permissions: ['rekomtek.create'],
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('requires a river ID or manual river name when a geographic location is supplied', async () => {
+    (prisma.rekomtek.findUnique as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      service.create(
+        {
+          nomor: 'REK-20260929-002',
+          judul: 'Permohonan lokasi contoh',
+          jenis: 'APU',
+          jenisPermohonan: 'IZIN_BARU',
+          jenisSumberAir: 'SUNGAI',
+          createdBy: 'Pemohon Contoh',
+          latitude: -6.2,
+          longitude: 106.8,
+          riverRegionId: 'ws-1',
+          watershedId: 'das-1',
+        } as never,
+        {
+          userId: 'user-1',
+          role: 'USER',
+          roles: ['USER'],
+          permissions: ['rekomtek.create'],
+        },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.rekomtek.create).not.toHaveBeenCalled();
+  });
+
   it('blocks review submission when a required checklist item has no Drive link', async () => {
     (prisma.rekomtek.findUnique as jest.Mock).mockResolvedValue({
       id: 'rekomtek-1',
       createdById: 'user-1',
       status: RekomtekStatus.DRAFT,
+      jenisSumberAir: 'SUNGAI',
       sourceRevision: 0,
       checklistRevision: 0,
     });
@@ -82,6 +292,28 @@ describe('RekomtekService', () => {
     expect(prisma.rekomtek.update).not.toHaveBeenCalled();
   });
 
+  it('requires a water source before submitting a draft', async () => {
+    (prisma.rekomtek.findUnique as jest.Mock).mockResolvedValue({
+      id: 'rekomtek-1',
+      createdById: 'user-1',
+      status: RekomtekStatus.DRAFT,
+      sourceRevision: 0,
+      jenisSumberAir: null,
+    });
+
+    await expect(
+      service.submit('rekomtek-1', {
+        userId: 'user-1',
+        role: 'USER',
+        roles: ['USER'],
+        permissions: [],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(berkasService.revalidateRequired).not.toHaveBeenCalled();
+    expect(prisma.rekomtek.updateMany).not.toHaveBeenCalled();
+  });
+
   it("allows a PETUGAS to access another user's recommendation", async () => {
     const rekomtek = { id: 'rekomtek-1', createdById: 'user-1' };
     (prisma.rekomtek.findUnique as jest.Mock).mockResolvedValue(rekomtek);
@@ -98,15 +330,12 @@ describe('RekomtekService', () => {
 
   it('blocks a PETUGAS-only account from creating a recommendation', async () => {
     await expect(
-      service.create(
-        { nomor: 'REK-TEST-001' } as never,
-        {
-          userId: 'petugas-1',
-          role: 'PETUGAS',
-          roles: ['PETUGAS'],
-          permissions: ['rekomtek.create'],
-        },
-      ),
+      service.create({ nomor: 'REK-TEST-001' } as never, {
+        userId: 'petugas-1',
+        role: 'PETUGAS',
+        roles: ['PETUGAS'],
+        permissions: ['rekomtek.create'],
+      }),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.rekomtek.findUnique).not.toHaveBeenCalled();
@@ -117,6 +346,7 @@ describe('RekomtekService', () => {
       id: 'rekomtek-1',
       createdById: 'user-1',
       status: RekomtekStatus.DRAFT,
+      jenisSumberAir: 'SUNGAI',
       sourceRevision: 0,
       checklistRevision: 0,
     });
@@ -133,6 +363,7 @@ describe('RekomtekService', () => {
         id: 'rekomtek-1',
         createdById: 'user-1',
         status: RekomtekStatus.DRAFT,
+        jenisSumberAir: 'SUNGAI',
         sourceRevision: 0,
         checklistRevision: 0,
       })
@@ -249,6 +480,7 @@ describe('RekomtekService', () => {
           judul: 'Galian C Baru',
           jenis: 'GALIAN_C',
           jenisPermohonan: 'IZIN_BARU',
+          jenisSumberAir: 'SUNGAI',
           createdBy: 'Pemohon Contoh',
         } as never,
         { userId: 'user-1', role: 'USER', roles: ['USER'], permissions: [] },
@@ -273,6 +505,7 @@ describe('RekomtekService', () => {
         judul: 'Galian C Baru',
         jenis: 'GALIAN_C',
         jenisPermohonan: 'IZIN_BARU',
+        jenisSumberAir: 'SUNGAI',
         createdBy: 'Pemohon Contoh',
       } as never,
       { userId: 'user-1', role: 'USER', roles: ['USER'], permissions: [] },
@@ -282,6 +515,32 @@ describe('RekomtekService', () => {
       'rekomtek-1',
       'GALIAN_C',
       'IZIN_BARU',
+    );
+  });
+
+  it('persists the selected water source on a new recommendation', async () => {
+    prisma.rekomtek.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'rekomtek-1', berkas: [] });
+    prisma.rekomtek.create.mockResolvedValue({ id: 'rekomtek-1' });
+    berkasService.generateFromTemplate.mockResolvedValue(1);
+
+    await service.create(
+      {
+        nomor: 'RKT/SUMBER-AIR/2026',
+        judul: 'Pemanfaatan Air Sungai',
+        jenis: 'APU',
+        jenisPermohonan: 'IZIN_BARU',
+        jenisSumberAir: 'DANAU',
+        createdBy: 'Pemohon Contoh',
+      } as never,
+      { userId: 'user-1', role: 'USER', roles: ['USER'], permissions: [] },
+    );
+
+    expect(prisma.rekomtek.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ jenisSumberAir: 'DANAU' }),
+      }),
     );
   });
 });

@@ -10,6 +10,11 @@ import {
   GisMasterDataParentDto,
   ImportGisMasterDataDto,
 } from './dto/gis-master-data-import.dto';
+import {
+  GeoJsonValidationReport,
+  GIS_MASTER_GEOMETRY_TYPES,
+  validateGeoJson,
+} from './gis-geometry.validator';
 
 export type GisMasterDataTarget = 'RIVER_REGION' | 'WATERSHED' | 'RIVER';
 
@@ -70,6 +75,7 @@ type MapContext = {
   category: string;
   geometry: Prisma.JsonValue | null;
   target: GisMasterDataTarget;
+  validation: GeoJsonValidationReport;
 };
 
 @Injectable()
@@ -105,6 +111,7 @@ export class GisMasterDataImportService {
       },
       parent,
       total: features.length,
+      validation: context.validation,
       features: features.map((feature) => {
         const keys = featureKeys(feature);
         const duplicateInFile = keys.some((key) => seen.has(key));
@@ -119,6 +126,9 @@ export class GisMasterDataImportService {
           code: feature.code ?? null,
           slug: feature.slug,
           geometryType: geometryType(feature.geometry),
+          validationErrors: context.validation.errors
+            .filter((issue) => issue.featureIndex === feature.index)
+            .map(({ code, message, path }) => ({ code, message, path })),
           action: duplicateInFile ? 'duplicate' : current ? 'update' : 'create',
           existing: current ? { id: current.id, name: current.name } : null,
         };
@@ -128,6 +138,12 @@ export class GisMasterDataImportService {
 
   async import(mapId: string, dto: ImportGisMasterDataDto) {
     const context = await this.getMapContext(mapId);
+    if (!context.validation.valid) {
+      throw new BadRequestException({
+        message: 'Impor dibatalkan karena geometri peta tidak valid',
+        validation: context.validation,
+      });
+    }
     const allFeatures = prepareFeatures(context.geometry);
     const features = selectFeatures(allFeatures, dto);
 
@@ -144,6 +160,20 @@ export class GisMasterDataImportService {
         context.target,
         features,
         context.id,
+      );
+      const existingIds = [
+        ...new Set(
+          [
+            ...existing.byCode.values(),
+            ...existing.bySlug.values(),
+            ...existing.byName.values(),
+          ].map((record) => record.id),
+        ),
+      ];
+      const publishedIds = await this.findPublishedMasterRecordIds(
+        tx,
+        context.target,
+        existingIds,
       );
       const seen = new Set<string>();
       const items: Array<{
@@ -181,6 +211,18 @@ export class GisMasterDataImportService {
             name: current.name,
             action: 'skipped',
             reason: 'already_exists',
+          });
+          continue;
+        }
+
+        if (current && publishedIds.has(current.id)) {
+          skipped += 1;
+          items.push({
+            index: feature.index,
+            id: current.id,
+            name: current.name,
+            action: 'skipped',
+            reason: 'published_requires_unpublish',
           });
           continue;
         }
@@ -282,10 +324,9 @@ export class GisMasterDataImportService {
       );
     }
 
-    const features = parseGeoJsonFeatures(map.geometry);
-    if (!features.length) {
-      throw new BadRequestException('Peta tidak berisi fitur GeoJSON');
-    }
+    const validation = validateGeoJson(map.geometry, {
+      allowedGeometryTypes: GIS_MASTER_GEOMETRY_TYPES[target],
+    });
 
     return {
       id: map.id,
@@ -293,6 +334,7 @@ export class GisMasterDataImportService {
       category: map.category,
       geometry: map.geometry,
       target,
+      validation,
     };
   }
 
@@ -397,6 +439,44 @@ export class GisMasterDataImportService {
       }
     }
     return { byCode, bySlug, byName };
+  }
+
+  private async findPublishedMasterRecordIds(
+    db: PrismaService | Prisma.TransactionClient,
+    target: GisMasterDataTarget,
+    ids: string[],
+  ): Promise<Set<string>> {
+    if (!ids.length) return new Set();
+
+    const where = {
+      id: { in: ids },
+      status: true,
+      publishedAt: { not: null },
+    };
+    let rows: Array<{ id: string }>;
+
+    switch (target) {
+      case 'RIVER_REGION':
+        rows = await db.riverRegion.findMany({
+          where,
+          select: { id: true },
+        });
+        break;
+      case 'WATERSHED':
+        rows = await db.watershed.findMany({
+          where,
+          select: { id: true },
+        });
+        break;
+      case 'RIVER':
+        rows = await db.river.findMany({
+          where,
+          select: { id: true },
+        });
+        break;
+    }
+
+    return new Set(rows.map((row) => row.id));
   }
 
   private async createMasterRecord(
@@ -541,9 +621,15 @@ function parseGeoJsonFeatures(value: unknown): GeoJsonFeature[] {
     return [];
   }
 
-  return root.features.flatMap((value) => {
+  return root.features.map((value, index) => {
     const feature = normalizeFeature(value);
-    return feature ? [feature] : [];
+    return (
+      feature ?? {
+        id: index,
+        geometry: null,
+        properties: {},
+      }
+    );
   });
 }
 

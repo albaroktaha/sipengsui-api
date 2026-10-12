@@ -38,7 +38,7 @@ describe('rekomtek workflow state machine', () => {
     );
     expect(
       projectWorkflowStatus(RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN),
-    ).toBe(RekomtekStatus.REJECTED);
+    ).toBe(RekomtekStatus.REVIEW);
     expect(projectWorkflowStatus(RekomtekWorkflowStage.DISETUJUI_ATASAN)).toBe(
       RekomtekStatus.APPROVED,
     );

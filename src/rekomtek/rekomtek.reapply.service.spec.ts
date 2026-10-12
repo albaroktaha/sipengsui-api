@@ -40,6 +40,7 @@ describe('RekomtekService.reapply', () => {
             deskripsi: null,
             status: RekomtekStatus.REJECTED,
             jenisPermohonan: 'IZIN_BARU',
+            jenisSumberAir: 'MATA_AIR',
             stationId: null,
             riverId: null,
             customRiverName: null,
@@ -98,6 +99,7 @@ describe('RekomtekService.reapply', () => {
         revisionNumber: 2,
         status: RekomtekStatus.DRAFT,
         nomor: 'REK-001-R2',
+        jenisSumberAir: 'MATA_AIR',
       }),
     });
     expect(tx.rekomtekBerkas.create).toHaveBeenCalledWith({

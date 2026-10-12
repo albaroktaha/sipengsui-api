@@ -398,7 +398,9 @@ describe('AuthService registration role assignment', () => {
     usersService.findByEmail.mockResolvedValue(null);
     usersService.findRoleByName.mockResolvedValue(userRole);
     usersService.create.mockResolvedValue(createdUser);
-    prisma.permission.findMany.mockResolvedValue([]);
+    prisma.permission.findMany.mockResolvedValue([
+      { id: 'dashboard-permission-id', slug: 'dashboard.view' },
+    ]);
     prisma.userRole.create.mockResolvedValue({
       id: 'membership-id',
       userId: createdUser.id,
@@ -422,6 +424,17 @@ describe('AuthService registration role assignment', () => {
 
     expect(prisma.userRole.create).toHaveBeenCalledWith({
       data: { userId: createdUser.id, roleId: userRole.id },
+    });
+    expect(prisma.userPermission.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: createdUser.id,
+          permissionId: 'dashboard-permission-id',
+          manualGrant: false,
+          sourceRoleIds: [userRole.id],
+        },
+      ],
+      skipDuplicates: true,
     });
   });
 });

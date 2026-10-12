@@ -57,7 +57,11 @@ describe('OAuthService registration role assignment', () => {
         create: jest.fn().mockResolvedValue({}),
       },
       permission: {
-        findMany: jest.fn().mockResolvedValue([]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'dashboard-permission-id', slug: 'dashboard.view' },
+          ]),
       },
       userPermission: {
         createMany: jest.fn(),
@@ -102,6 +106,17 @@ describe('OAuthService registration role assignment', () => {
 
     expect(tx.userRole.create).toHaveBeenCalledWith({
       data: { userId: createdUser.id, roleId: userRole.id },
+    });
+    expect(tx.userPermission.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: createdUser.id,
+          permissionId: 'dashboard-permission-id',
+          manualGrant: false,
+          sourceRoleIds: [userRole.id],
+        },
+      ],
+      skipDuplicates: true,
     });
   });
 });

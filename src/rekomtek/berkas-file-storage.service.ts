@@ -9,6 +9,7 @@ import {
   access,
   copyFile,
   mkdir,
+  readFile,
   rename,
   rm,
   stat,
@@ -256,6 +257,33 @@ export class BerkasFileStorageService {
       return { stream: createReadStream(path), size: metadata.size };
     } catch {
       throw new NotFoundException('File persyaratan tidak ditemukan');
+    }
+  }
+
+  async storeGeneratedPdf(buffer: Buffer): Promise<string> {
+    if (
+      !buffer.length ||
+      buffer.length > 25 * 1024 * 1024 ||
+      buffer.subarray(0, 5).toString('ascii') !== '%PDF-'
+    ) {
+      throw new BadRequestException(
+        'PDF pratinjau yang dihasilkan tidak valid',
+      );
+    }
+    const storageKey = `generated/${randomUUID()}.pdf`;
+    await mkdir(join(this.root, 'generated'), { recursive: true });
+    await writeFile(this.resolvePath(storageKey), buffer, { flag: 'wx' });
+    return storageKey;
+  }
+
+  async readBuffer(storageKey: string): Promise<Buffer> {
+    if (!storageKey.startsWith('generated/')) {
+      throw new BadRequestException('Storage key file tidak valid');
+    }
+    try {
+      return await readFile(this.resolvePath(storageKey));
+    } catch {
+      throw new NotFoundException('File pratinjau tidak ditemukan');
     }
   }
 

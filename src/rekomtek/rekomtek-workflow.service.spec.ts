@@ -50,9 +50,29 @@ function createFixture() {
   const tx = {
     rekomtek: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      findUnique: jest
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'rekomtek-1',
+        status: RekomtekStatus.REVIEW,
+        nomor: 'RKT/001/2026',
+        judul: 'Permohonan APU',
+        jenis: 'APU',
+        jenisPermohonan: 'IZIN_BARU',
+        createdBy: 'pemohon@example.test',
+        createdById: 'pemohon-1',
+        createdByUser: {
+          firstName: 'Siti',
+          lastName: 'Aminah',
+          organization: 'PT Air',
+          address: 'Bandung',
+        },
+      }),
+    },
+    rekomtekBerkas: {
+      findMany: jest
         .fn()
-        .mockResolvedValue({ id: 'rekomtek-1', status: RekomtekStatus.REVIEW }),
+        .mockResolvedValue([
+          { id: 'berkas-1', kode: '01', uraian: 'Dokumen teknis' },
+        ]),
     },
     rekomtekReviewRound: {
       findFirst: jest.fn().mockResolvedValue(null),
@@ -60,6 +80,13 @@ function createFixture() {
     },
     rekomtekWorkflowEvent: {
       create: jest.fn().mockResolvedValue({ id: 'event-1' }),
+    },
+    rekomtekArtifact: {
+      aggregate: jest.fn().mockResolvedValue({ _max: { version: 0 } }),
+      create: jest.fn().mockResolvedValue({ id: 'generated-letter-1' }),
+    },
+    rejectionLetterJob: {
+      create: jest.fn().mockResolvedValue({ id: 'rejection-job-1' }),
     },
     rekomtekReviewFinding: {
       findMany: jest.fn(),
@@ -137,7 +164,8 @@ function createFixture() {
   };
   const storage = {
     stage: jest.fn(),
-    remove: jest.fn(),
+    revalidate: jest.fn(),
+    remove: jest.fn().mockResolvedValue(undefined),
     getFile: jest.fn().mockResolvedValue({ stream: {}, size: 123 }),
   };
   const mailService = {
@@ -157,8 +185,193 @@ function createFixture() {
     undefined,
     whatsappOutbox as never,
   );
-  return { service, prisma, tx, berkasService, mailService, whatsappOutbox };
+  return {
+    service,
+    prisma,
+    tx,
+    berkasService,
+    mailService,
+    whatsappOutbox,
+    storage,
+  };
 }
+
+const letterDetails = {
+  letterNumber: '600/123/SDA/2026',
+  subject: 'Penolakan Permohonan Izin Sumber Daya Air',
+  letterDate: '2026-10-06',
+  city: 'Medan',
+  institution: 'DINAS SUMBER DAYA AIR',
+  signatoryName: 'Pejabat Contoh',
+  signatoryPosition: 'Kepala Bidang',
+  signatoryIdentity: 'NIP. 123456',
+  expectedWorkflowVersion: 4,
+};
+
+function finalLetterFixture() {
+  const fixture = createFixture();
+  fixture.prisma.rekomtek.findUnique
+    .mockResolvedValueOnce(
+      record({
+        workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
+      }),
+    )
+    .mockResolvedValueOnce({
+      nomor: 'RKT/001/2026',
+      judul: 'Pemanfaatan Air',
+      jenis: 'APU',
+      jenisPermohonan: 'IZIN_BARU',
+      createdBy: 'Budi',
+      createdByUser: {
+        firstName: 'Budi',
+        lastName: 'Pemohon',
+        organization: 'PT Air Mandiri',
+        address: 'Medan',
+      },
+      reviewRounds: [
+        {
+          summary: 'Dokumen belum lengkap.',
+          findings: [
+            {
+              note: 'Peta belum dilengkapi.',
+              rekomtekBerkas: { kode: '3', uraian: 'Peta lokasi' },
+            },
+          ],
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      nomor: 'RKT/001/2026',
+      judul: 'Pemanfaatan Air',
+      createdByUser: {
+        email: 'pemohon@example.com',
+        firstName: 'Budi',
+        lastName: 'Pemohon',
+      },
+    });
+  fixture.storage.stage.mockResolvedValue({
+    storageKey: 'active/generated.pdf',
+    mimeType: 'application/pdf',
+    size: 1234,
+    technicalStatus: 'VALID',
+  });
+  return fixture;
+}
+
+describe('direct rejection letter issuance', () => {
+  const issuer = () =>
+    actor({ permissions: ['rekomtek.reject', 'rekomtek.artifact'] });
+
+  it('rejects uploading a Surat Penolakan PDF through the legacy artifact endpoint', async () => {
+    const { service, prisma, storage } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
+      }),
+    );
+
+    await expect(
+      service.uploadArtifact(
+        'rekomtek-1',
+        { type: RekomtekArtifactType.SURAT_PENOLAKAN },
+        {
+          originalname: 'surat-penolakan.pdf',
+          mimetype: 'application/pdf',
+          buffer: Buffer.from('%PDF-'),
+        } as Express.Multer.File,
+        issuer(),
+      ),
+    ).rejects.toThrow(
+      'Surat Penolakan tidak dapat diunggah atau difinalisasi; penerbitan menunggu aktivasi TTE',
+    );
+    expect(storage.stage).not.toHaveBeenCalled();
+  });
+
+  it('rejects finalizing an older uploaded rejection artifact', async () => {
+    const { service, prisma, storage } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
+      }),
+    );
+    prisma.rekomtekArtifact.findFirst.mockResolvedValue({
+      id: 'legacy-rejection',
+      type: RekomtekArtifactType.SURAT_PENOLAKAN,
+      status: RekomtekArtifactStatus.DRAFT,
+      stage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
+      storageKey: 'active/legacy.pdf',
+    });
+
+    await expect(
+      service.finalizeArtifact('rekomtek-1', 'legacy-rejection', issuer()),
+    ).rejects.toThrow(
+      'Surat Penolakan tidak dapat diunggah atau difinalisasi; penerbitan menunggu aktivasi TTE',
+    );
+    expect(storage.revalidate).not.toHaveBeenCalled();
+  });
+
+  it('rejects the legacy reject command instead of issuing an uploaded artifact', async () => {
+    const { service, prisma, storage } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
+      }),
+    );
+
+    await expect(service.legacyReject('rekomtek-1', issuer())).rejects.toThrow(
+      'Gunakan antrean persetujuan surat penolakan; penerbitan langsung dinonaktifkan',
+    );
+    expect(storage.stage).not.toHaveBeenCalled();
+  });
+
+  it('blocks legacy manual previews so only queued snapshots can be reviewed', async () => {
+    const { service, tx, storage } = finalLetterFixture();
+
+    await expect(
+      service.previewRejectionLetter('rekomtek-1', letterDetails, issuer()),
+    ).rejects.toThrow('Gunakan antrean persetujuan surat penolakan');
+
+    expect(storage.stage).not.toHaveBeenCalled();
+    expect(tx.rekomtekArtifact.create).not.toHaveBeenCalled();
+    expect(tx.rekomtek.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for direct unsigned issuance while TTE is not activated', async () => {
+    const { service, tx, storage, whatsappOutbox } = finalLetterFixture();
+
+    await expect(
+      service.generateAndIssueRejection('rekomtek-1', letterDetails, issuer()),
+    ).rejects.toThrow('Penandatanganan dan penerbitan surat dinonaktifkan');
+
+    expect(storage.stage).not.toHaveBeenCalled();
+    expect(tx.rekomtekArtifact.create).not.toHaveBeenCalled();
+    expect(tx.rekomtek.updateMany).not.toHaveBeenCalled();
+    expect(whatsappOutbox.enqueueWorkflowTransition).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unassigned member and a user without artifact permission', async () => {
+    const first = finalLetterFixture();
+    first.prisma.rekomtekTeamMember.findFirst.mockResolvedValue(null);
+    first.prisma.rekomtekTeamMember.findMany.mockResolvedValue([]);
+    await expect(
+      first.service.generateAndIssueRejection(
+        'rekomtek-1',
+        letterDetails,
+        issuer(),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+    expect(first.storage.stage).not.toHaveBeenCalled();
+    const second = finalLetterFixture();
+    await expect(
+      second.service.generateAndIssueRejection(
+        'rekomtek-1',
+        letterDetails,
+        actor({ permissions: ['rekomtek.reject'] }),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+    expect(second.storage.stage).not.toHaveBeenCalled();
+  });
+});
 
 describe('RekomtekWorkflowService', () => {
   it('lists active Petugas as candidates for Pokja assignment', async () => {
@@ -203,6 +416,55 @@ describe('RekomtekWorkflowService', () => {
     await expect(
       service.getWorkflow('rekomtek-1', actor()),
     ).resolves.toBeTruthy();
+  });
+
+  it('includes the checklist requirement on findings returned to correction applicants', async () => {
+    const { service, prisma } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        reviewRounds: [
+          {
+            id: 'round-1',
+            type: RekomtekReviewType.EVALUASI_AWAL,
+            roundNumber: 1,
+            findings: [
+              {
+                id: 'finding-1',
+                rekomtekBerkasId: 'berkas-not-on-current-page',
+                note: 'Dokumen perlu diperbaiki',
+                applicantResponse: null,
+                status: 'TERBUKA',
+                rekomtekBerkas: { kode: '24', uraian: 'Surat kuasa' },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const result = await service.getWorkflow('rekomtek-1', actor());
+
+    expect(prisma.rekomtek.findUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          reviewRounds: expect.objectContaining({
+            include: {
+              findings: {
+                include: {
+                  rekomtekBerkas: {
+                    select: { kode: true, uraian: true },
+                  },
+                },
+              },
+            },
+          }),
+        }),
+      }),
+    );
+    expect(result.reviewRounds[0].findings[0].rekomtekBerkas).toEqual({
+      kode: '24',
+      uraian: 'Surat kuasa',
+    });
   });
 
   it('returns display names and roles for workflow assignment members', async () => {
@@ -996,6 +1258,28 @@ describe('RekomtekWorkflowService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('requires an evaluation summary when re-evaluation findings indicate rejection', async () => {
+    const { service, prisma, tx } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.EVALUASI_DOKUMEN_ULANG,
+        workflowVersion: 7,
+      }),
+    );
+
+    await expect(
+      service.evaluateInitialRecheck(
+        'rekomtek-1',
+        {
+          decision: 'TIDAK_MEMENUHI',
+          findings: [{ berkasId: 'berkas-1', note: 'Tidak lengkap' }],
+        },
+        actor(),
+      ),
+    ).rejects.toThrow('Ringkasan dan minimal satu temuan wajib diisi');
+    expect(tx.rejectionLetterJob.create).not.toHaveBeenCalled();
+  });
+
   it('routes an unsuccessful re-evaluation to the rejection-letter stage', async () => {
     const { service, prisma, tx } = createFixture();
     prisma.rekomtek.findUnique.mockResolvedValue(
@@ -1009,6 +1293,7 @@ describe('RekomtekWorkflowService', () => {
       'rekomtek-1',
       {
         decision: 'TIDAK_MEMENUHI',
+        summary: 'Masih terdapat kekurangan dokumen.',
         findings: [{ berkasId: 'berkas-1', note: 'Masih tidak valid' }],
       },
       actor(),
@@ -1018,185 +1303,39 @@ describe('RekomtekWorkflowService', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
-          status: RekomtekStatus.REJECTED,
+          status: RekomtekStatus.REVIEW,
         }),
       }),
     );
-  });
-
-  it('generates a draft rejection PDF from the latest re-evaluation findings', async () => {
-    const { service, prisma } = createFixture();
-    prisma.rekomtek.findUnique
-      .mockResolvedValueOnce(
-        record({
-          workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
-          status: RekomtekStatus.REVIEW,
+    expect(tx.rejectionLetterJob.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        rekomtekId: 'rekomtek-1',
+        evaluationRoundId: 'round-1',
+        createdById: 'pokja-1',
+        status: 'WAITING_APPROVAL',
+        applicantSnapshot: expect.objectContaining({
+          applicationNumber: 'RKT/001/2026',
+          applicantName: 'Siti Aminah',
+          applicantOrganization: 'PT Air',
         }),
-      )
-      .mockResolvedValueOnce({
-        nomor: 'RKT/001/2026',
-        judul: 'Pemanfaatan Air Permukaan',
-        jenis: 'APU',
-        jenisPermohonan: 'IZIN_BARU',
-        createdBy: 'PT Tirta Contoh',
-        createdByUser: {
-          firstName: 'Tirta',
-          lastName: 'Contoh',
-          organization: 'PT Tirta Contoh',
-          address: 'Kabupaten Bandung',
-        },
-        reviewRounds: [
-          {
-            summary: 'Persyaratan belum terpenuhi pada evaluasi ulang.',
-            findings: [
-              {
-                note: 'Peta lokasi belum dapat diverifikasi.',
-                rekomtekBerkas: {
-                  kode: '3',
-                  uraian: 'Peta lokasi',
-                },
-              },
-            ],
-          },
-        ],
-      });
-
-    const result = await service.getRejectionLetterDraftPdf(
-      'rekomtek-1',
-      actor({ permissions: ['rekomtek.read', 'rekomtek.workflow.read'] }),
-    );
-
-    expect(result.fileName).toBe('RKT-001-2026-draft-surat-penolakan.pdf');
-    expect(result.buffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
-  });
-
-  it('lets the applicant download the rejection draft for their own application', async () => {
-    const { service, prisma } = createFixture();
-    prisma.rekomtek.findUnique
-      .mockResolvedValueOnce(
-        record({
-          workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
-          status: RekomtekStatus.REVIEW,
-          createdById: 'pemohon-1',
+        evaluationSnapshot: expect.objectContaining({
+          summary: 'Masih terdapat kekurangan dokumen.',
+          findings: [
+            { requirement: '01 Dokumen teknis', note: 'Masih tidak valid' },
+          ],
         }),
-      )
-      .mockResolvedValueOnce({
-        nomor: 'RKT/002/2026',
-        judul: 'Permohonan Ditolak',
-        jenis: 'APU',
-        jenisPermohonan: 'IZIN_BARU',
-        createdBy: 'Pemohon Contoh',
-        createdByUser: {
-          firstName: 'Pemohon',
-          lastName: 'Contoh',
-          organization: 'PT Contoh',
-          address: 'Kabupaten Bandung',
+        events: {
+          create: expect.objectContaining({
+            action: 'AUTO_QUEUE_CREATED',
+            toStatus: 'WAITING_APPROVAL',
+            actorId: 'pokja-1',
+          }),
         },
-        reviewRounds: [
-          {
-            summary: 'Persyaratan belum terpenuhi.',
-            findings: [
-              {
-                note: 'Dokumen belum sesuai.',
-                rekomtekBerkas: {
-                  kode: '1',
-                  uraian: 'Surat permohonan',
-                },
-              },
-            ],
-          },
-        ],
-      });
-
-    const result = await service.getRejectionLetterDraftPdf(
-      'rekomtek-1',
-      actor({
-        userId: 'pemohon-1',
-        role: 'USER',
-        roles: ['USER'],
-        permissions: ['rekomtek.read'],
       }),
-    );
-
-    expect(result.fileName).toBe('RKT-002-2026-draft-surat-penolakan.pdf');
-    expect(result.buffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
-  });
-
-  it('emails the applicant after a rejection is successfully issued', async () => {
-    const { service, prisma, mailService } = createFixture();
-    prisma.rekomtek.findUnique
-      .mockResolvedValueOnce(
-        record({
-          workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
-        }),
-      )
-      .mockResolvedValueOnce({
-        nomor: 'RKT/001/2026',
-        judul: 'Pemanfaatan Air Permukaan',
-        createdByUser: {
-          email: 'pemohon@example.com',
-          firstName: 'Tirta',
-          lastName: 'Contoh',
-        },
-      });
-    prisma.rekomtekArtifact.findFirst.mockResolvedValue({
-      id: 'artifact-1',
-      type: 'SURAT_PENOLAKAN',
-      status: 'FINAL',
-      technicalStatus: 'VALID',
-    });
-
-    await service.issueRejection(
-      'rekomtek-1',
-      actor({ permissions: ['rekomtek.reject'] }),
-    );
-
-    expect(mailService.sendRejectionLetterEmail).toHaveBeenCalledWith({
-      email: 'pemohon@example.com',
-      applicantName: 'Tirta Contoh',
-      applicationNumber: 'RKT/001/2026',
-      applicationTitle: 'Pemanfaatan Air Permukaan',
-      applicationUrl: `${process.env.APP_URL ?? 'http://localhost:3001'}/dashboard/rekomtek/rekomtek-1`,
     });
   });
 
-  it('keeps the rejection successful when SMTP delivery fails', async () => {
-    const { service, prisma, mailService } = createFixture();
-    prisma.rekomtek.findUnique
-      .mockResolvedValueOnce(
-        record({
-          workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
-        }),
-      )
-      .mockResolvedValueOnce({
-        nomor: 'RKT/001/2026',
-        judul: 'Pemanfaatan Air Permukaan',
-        createdByUser: {
-          email: 'pemohon@example.com',
-          firstName: 'Tirta',
-          lastName: 'Contoh',
-        },
-      });
-    prisma.rekomtekArtifact.findFirst.mockResolvedValue({
-      id: 'artifact-1',
-      type: 'SURAT_PENOLAKAN',
-      status: 'FINAL',
-      technicalStatus: 'VALID',
-    });
-    mailService.sendRejectionLetterEmail.mockRejectedValue(
-      new Error('SMTP unavailable'),
-    );
-
-    await expect(
-      service.issueRejection(
-        'rekomtek-1',
-        actor({ permissions: ['rekomtek.reject'] }),
-      ),
-    ).resolves.toBeTruthy();
-    expect(mailService.sendRejectionLetterEmail).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not let an unassigned Petugas download the rejection draft', async () => {
+  it('does not let an unassigned Petugas open the rejection-letter form', async () => {
     const { service, prisma } = createFixture();
     prisma.rekomtek.findUnique.mockResolvedValue(
       record({
@@ -1207,9 +1346,9 @@ describe('RekomtekWorkflowService', () => {
     prisma.rekomtekTeamMember.findMany.mockResolvedValue([]);
 
     await expect(
-      service.getRejectionLetterDraftPdf(
+      service.getRejectionLetterContext(
         'rekomtek-1',
-        actor({ permissions: ['rekomtek.read', 'rekomtek.workflow.read'] }),
+        actor({ permissions: ['rekomtek.reject', 'rekomtek.artifact'] }),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
@@ -1375,5 +1514,184 @@ describe('RekomtekWorkflowService', () => {
       mimeType: 'application/pdf',
       fileName: 'surat-penolakan.pdf',
     });
+  });
+
+  it('lets the applicant download a final test-only rejection letter from generated storage', async () => {
+    const { service, prisma, storage } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.DITOLAK,
+        status: RekomtekStatus.REJECTED,
+        createdById: 'pemohon-1',
+      }),
+    );
+    prisma.rekomtekArtifact.findFirst.mockResolvedValue({
+      id: 'test-rejection',
+      rekomtekId: 'rekomtek-1',
+      type: RekomtekArtifactType.SURAT_PENOLAKAN,
+      status: RekomtekArtifactStatus.FINAL,
+      technicalStatus: BerkasTechnicalStatus.VALID,
+      stage: RekomtekWorkflowStage.DITOLAK,
+      storageKey: 'generated/test-rejection.pdf',
+      mimeType: 'application/pdf',
+      fileName: 'UJI-LOKAL-surat-penolakan.pdf',
+      metadata: {
+        issuanceMethod: 'HEAD_APPROVAL_QR',
+        isTestOnly: true,
+        sourceJobId: 'job-test',
+      },
+    });
+
+    await expect(
+      service.getArtifactFile(
+        'rekomtek-1',
+        'test-rejection',
+        actor({
+          userId: 'pemohon-1',
+          role: 'USER',
+          roles: ['USER'],
+          permissions: ['rekomtek.read'],
+        }),
+      ),
+    ).resolves.toMatchObject({
+      size: 123,
+      mimeType: 'application/pdf',
+      fileName: 'UJI-LOKAL-surat-penolakan.pdf',
+    });
+    expect(storage.getFile).toHaveBeenCalledWith(
+      'generated/test-rejection.pdf',
+    );
+  });
+
+  it('keeps other generated artifacts unavailable to normal downloads', async () => {
+    const { service, prisma, storage } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.DITOLAK,
+        status: RekomtekStatus.REJECTED,
+        createdById: 'pemohon-1',
+      }),
+    );
+    prisma.rekomtekArtifact.findFirst.mockResolvedValue({
+      id: 'generated-internal',
+      rekomtekId: 'rekomtek-1',
+      type: RekomtekArtifactType.SURAT_PENOLAKAN,
+      status: RekomtekArtifactStatus.FINAL,
+      technicalStatus: BerkasTechnicalStatus.VALID,
+      stage: RekomtekWorkflowStage.DITOLAK,
+      storageKey: 'generated/internal.pdf',
+      mimeType: 'application/pdf',
+      fileName: 'internal.pdf',
+      metadata: null,
+    });
+
+    await expect(
+      service.getArtifactFile(
+        'rekomtek-1',
+        'generated-internal',
+        actor({
+          userId: 'pemohon-1',
+          role: 'USER',
+          roles: ['USER'],
+          permissions: ['rekomtek.read'],
+        }),
+      ),
+    ).rejects.toThrow('Artefak belum berada pada storage aktif');
+    expect(storage.getFile).not.toHaveBeenCalled();
+  });
+
+  it('lets the applicant download an officially issued QR rejection letter', async () => {
+    const { service, prisma, storage } = createFixture();
+    prisma.rekomtek.findUnique.mockResolvedValue(
+      record({
+        workflowStage: RekomtekWorkflowStage.DITOLAK,
+        status: RekomtekStatus.REJECTED,
+        createdById: 'pemohon-1',
+      }),
+    );
+    prisma.rekomtekArtifact.findFirst.mockResolvedValue({
+      id: 'official-qr',
+      rekomtekId: 'rekomtek-1',
+      type: RekomtekArtifactType.SURAT_PENOLAKAN,
+      status: RekomtekArtifactStatus.FINAL,
+      technicalStatus: BerkasTechnicalStatus.VALID,
+      stage: RekomtekWorkflowStage.DITOLAK,
+      storageKey: 'generated/official-qr.pdf',
+      mimeType: 'application/pdf',
+      fileName: 'surat-penolakan.pdf',
+      metadata: {
+        issuanceMethod: 'HEAD_APPROVAL_QR',
+        isTestOnly: false,
+        sourceJobId: 'job-official',
+      },
+    });
+    await expect(
+      service.getArtifactFile(
+        'rekomtek-1',
+        'official-qr',
+        actor({
+          userId: 'pemohon-1',
+          role: 'USER',
+          roles: ['USER'],
+          permissions: ['rekomtek.read'],
+        }),
+      ),
+    ).resolves.toMatchObject({ fileName: 'surat-penolakan.pdf' });
+    expect(storage.getFile).toHaveBeenCalledWith('generated/official-qr.pdf');
+  });
+
+  it('transitions a local QR test issue to DITOLAK without notifications', async () => {
+    const { service, tx, whatsappOutbox } = createFixture();
+    tx.rekomtek.findUnique.mockResolvedValueOnce(
+      record({
+        workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
+        workflowVersion: 5,
+      }),
+    );
+    const serviceWithQrTransition = service as unknown as {
+      transitionRejectionToIssuedInTransaction: (
+        transaction: unknown,
+        rekomtekId: string,
+        user: unknown,
+        metadata: unknown,
+        options: { suppressNotifications: boolean },
+      ) => Promise<unknown>;
+    };
+
+    await serviceWithQrTransition.transitionRejectionToIssuedInTransaction(
+      tx,
+      'rekomtek-1',
+      actor({
+        role: 'PIMPINAN',
+        roles: ['PIMPINAN'],
+        permissions: ['rekomtek.approve.final'],
+      }),
+      { issuanceMethod: 'HEAD_APPROVAL_QR', isTestOnly: true },
+      { suppressNotifications: true },
+    );
+
+    expect(tx.rekomtek.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'rekomtek-1',
+          workflowStage: RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN,
+          workflowVersion: 5,
+        }),
+        data: expect.objectContaining({
+          workflowStage: RekomtekWorkflowStage.DITOLAK,
+          status: RekomtekStatus.REJECTED,
+        }),
+      }),
+    );
+    expect(tx.rekomtekWorkflowEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'TERBITKAN_SURAT_PENOLAKAN_QR_UJI_LOKAL',
+          toStage: RekomtekWorkflowStage.DITOLAK,
+        }),
+      }),
+    );
+    expect(tx.rekomtekNotification.createMany).not.toHaveBeenCalled();
+    expect(whatsappOutbox.enqueueWorkflowTransition).not.toHaveBeenCalled();
   });
 });

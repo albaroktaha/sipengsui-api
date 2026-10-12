@@ -187,15 +187,19 @@ export class WhatsAppConfig {
       ),
       EXPOSE_INVITATION: this.readVersion(
         'WHATSAPP_MESSAGE_EXPOSE_SCHEDULED_VERSION',
+        'v3',
       ),
       EXPOSE_RESCHEDULED: this.readVersion(
         'WHATSAPP_MESSAGE_EXPOSE_RESCHEDULED_VERSION',
+        'v3',
       ),
       EXPOSE_CANCELLED: this.readVersion(
         'WHATSAPP_MESSAGE_EXPOSE_CANCELLED_VERSION',
+        'v3',
       ),
       EXPOSE_REMINDER: this.readVersion(
         'WHATSAPP_MESSAGE_EXPOSE_REMINDER_VERSION',
+        'v3',
       ),
       REJECTED: this.readVersion('WHATSAPP_MESSAGE_REJECTED_VERSION'),
       PUBLISHED: this.readVersion('WHATSAPP_MESSAGE_PUBLISHED_VERSION'),
@@ -233,8 +237,8 @@ export class WhatsAppConfig {
     return this.messageVersions[key];
   }
 
-  private readVersion(key: string): string {
-    return this.config.get<string>(key)?.trim() || 'v1';
+  private readVersion(key: string, fallback = 'v1'): string {
+    return this.config.get<string>(key)?.trim() || fallback;
   }
 
   private normalizeBaseUrl(value: string): string {

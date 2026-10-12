@@ -4,6 +4,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { GIS_MASTER_GEOMETRY_TYPES } from '../gis/gis-geometry.validator';
+import { assertGeoJsonGeometry } from '../gis/gis-geometry.policy';
 
 import { CreateRiverRegionDto } from './dto/create-river-region.dto';
 import { UpdateRiverRegionDto } from './dto/update-river-region.dto';
@@ -13,6 +15,11 @@ export class RiverRegionsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateRiverRegionDto) {
+    assertGeoJsonGeometry(
+      dto.geometry,
+      GIS_MASTER_GEOMETRY_TYPES.RIVER_REGION,
+      'Wilayah Sungai',
+    );
     return this.prisma.riverRegion.create({
       data: dto,
     });
@@ -40,6 +47,13 @@ export class RiverRegionsService {
 
   async update(id: string, dto: UpdateRiverRegionDto) {
     await this.findOne(id);
+    if (dto.geometry !== undefined) {
+      assertGeoJsonGeometry(
+        dto.geometry,
+        GIS_MASTER_GEOMETRY_TYPES.RIVER_REGION,
+        'Wilayah Sungai',
+      );
+    }
 
     return this.prisma.riverRegion.update({
       where: { id },

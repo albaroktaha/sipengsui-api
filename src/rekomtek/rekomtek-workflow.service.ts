@@ -3,12 +3,12 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+
 import {
   BerkasTechnicalStatus,
   Prisma,
@@ -45,6 +45,7 @@ import {
   ExposeVerificationDto,
   ExternalExposeParticipantDto,
   IssueFieldVisitDto,
+  IssueRejectionLetterDto,
   OfficialReviewDto,
   ResolveWorkflowMigrationDto,
   RescheduleExposeDto,
@@ -59,11 +60,7 @@ import {
   projectWorkflowStatus,
   WORKFLOW_STAGE_LABELS,
 } from './workflow-state';
-import {
-  buildRejectionLetterDraft,
-  rejectionLetterFileName,
-  renderRejectionLetterPdf,
-} from './rekomtek-rejection-letter';
+import { RejectionLetterDraftInput } from './rekomtek-rejection-letter';
 
 const detailInclude = {
   station: true,
@@ -92,6 +89,20 @@ const detailInclude = {
     orderBy: [{ type: 'asc' as const }, { version: 'asc' as const }],
   },
   workflowEvents: { orderBy: { createdAt: 'asc' as const } },
+} satisfies Prisma.RekomtekInclude;
+
+const workflowResponseInclude = {
+  ...detailInclude,
+  reviewRounds: {
+    include: {
+      findings: {
+        include: {
+          rekomtekBerkas: { select: { kode: true, uraian: true } },
+        },
+      },
+    },
+    orderBy: { openedAt: 'asc' as const },
+  },
 } satisfies Prisma.RekomtekInclude;
 
 const APPLICANT_OUTPUT_ARTIFACT_TYPES: RekomtekArtifactType[] = [
@@ -195,7 +206,7 @@ export class RekomtekWorkflowService {
     await this.assertReadAccess(current, user);
     const detail = await this.prisma.rekomtek.findUnique({
       where: { id },
-      include: detailInclude,
+      include: workflowResponseInclude,
     });
     if (!detail) return detail;
 
@@ -707,9 +718,9 @@ export class RekomtekWorkflowService {
         id,
         'Seluruh Berkas Persyaratan wajib valid pada evaluasi ulang',
       );
-    } else if (findings.length === 0) {
+    } else if (!dto.summary?.trim() || findings.length === 0) {
       throw new BadRequestException(
-        'Evaluasi ulang yang tidak memenuhi wajib memuat temuan',
+        'Ringkasan dan minimal satu temuan wajib diisi',
       );
     } else {
       const validation = await this.berkasService.revalidateRequired(id);
@@ -732,7 +743,7 @@ export class RekomtekWorkflowService {
         ? RekomtekWorkflowStage.MENUNGGU_JADWAL_EKSPOSE
         : RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN;
     return this.prisma.$transaction(async (tx) => {
-      await this.createReviewRound(
+      const reviewRound = await this.createReviewRound(
         tx,
         id,
         RekomtekReviewType.EVALUASI_ULANG,
@@ -743,6 +754,84 @@ export class RekomtekWorkflowService {
         findings,
         user,
       );
+      if (dto.decision === 'TIDAK_MEMENUHI') {
+        const application = await tx.rekomtek.findUnique({
+          where: { id },
+          select: {
+            nomor: true,
+            judul: true,
+            jenis: true,
+            jenisPermohonan: true,
+            createdBy: true,
+            createdByUser: {
+              select: {
+                firstName: true,
+                lastName: true,
+                organization: true,
+                address: true,
+              },
+            },
+          },
+        });
+        if (!application) {
+          throw new NotFoundException('Permohonan Rekomtek tidak ditemukan');
+        }
+        const berkas = await tx.rekomtekBerkas.findMany({
+          where: { id: { in: findings.map((finding) => finding.berkasId) } },
+          select: { id: true, kode: true, uraian: true },
+        });
+        const berkasById = new Map(berkas.map((item) => [item.id, item]));
+        const applicant = application.createdByUser;
+        const applicantName = [applicant?.firstName, applicant?.lastName]
+          .filter((value): value is string => Boolean(value?.trim()))
+          .join(' ')
+          .trim();
+        const evaluationFindings = findings.map((finding) => {
+          const requirement = berkasById.get(finding.berkasId);
+          if (!requirement) {
+            throw new ConflictException(
+              'Snapshot evaluasi tidak dapat dibuat karena berkas persyaratan berubah',
+            );
+          }
+          return {
+            requirement: `${requirement.kode} ${requirement.uraian}`,
+            note: finding.note.trim(),
+          };
+        });
+        await tx.rejectionLetterJob.create({
+          data: {
+            rekomtekId: id,
+            evaluationRoundId: reviewRound.id,
+            createdById: user.userId,
+            status: 'WAITING_APPROVAL',
+            applicantSnapshot: {
+              applicationNumber: application.nomor,
+              applicationTitle: application.judul,
+              applicationType: `${application.jenis} / ${application.jenisPermohonan}`,
+              applicantName: applicantName || application.createdBy,
+              applicantOrganization: applicant?.organization ?? null,
+              applicantAddress: applicant?.address ?? null,
+            },
+            evaluationSnapshot: {
+              summary: dto.summary?.trim() || null,
+              findings: evaluationFindings,
+            },
+            events: {
+              create: {
+                action: 'AUTO_QUEUE_CREATED',
+                fromStatus: null,
+                toStatus: 'WAITING_APPROVAL',
+                actorId: user.userId,
+                actorRole: user.role,
+                metadata: {
+                  evaluationRoundId: reviewRound.id,
+                  findingCount: evaluationFindings.length,
+                },
+              },
+            },
+          },
+        });
+      }
       return this.transitionInTransaction(
         tx,
         current,
@@ -755,37 +844,9 @@ export class RekomtekWorkflowService {
     });
   }
 
-  async issueRejection(id: string, user: AuthenticatedUser) {
-    this.assertPermission(user, 'rekomtek.reject');
-    this.assertRole(user, 'PETUGAS', 'PIMPINAN', 'SUPER_ADMIN', 'ADMIN');
-    const current = await this.loadRecord(id);
-    this.assertStage(current, RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN);
-    await this.assertPokjaOrOfficialAccess(id, user);
-    await this.assertFinalArtifact(id, RekomtekArtifactType.SURAT_PENOLAKAN);
-    const result = await this.transition(
-      id,
-      current,
-      RekomtekWorkflowStage.DITOLAK,
-      'TERBITKAN_SURAT_PENOLAKAN',
-      user,
-      {
-        reviewedBy: user.userId,
-        reviewedAt: new Date(),
-      },
-    );
-    await this.notifyApplicantRejection(id);
-    return result;
-  }
-
-  async getRejectionLetterDraftPdf(
+  private async loadRejectionLetterInput(
     id: string,
-    user: AuthenticatedUser,
-  ): Promise<{ buffer: Buffer; fileName: string }> {
-    this.assertPermission(user, 'rekomtek.read');
-    const current = await this.loadRecord(id);
-    this.assertStage(current, RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN);
-    await this.assertReadAccess(current, user);
-
+  ): Promise<RejectionLetterDraftInput> {
     const record = await this.prisma.rekomtek.findUnique({
       where: { id },
       select: {
@@ -829,7 +890,7 @@ export class RekomtekWorkflowService {
       .join(' ')
       .trim();
     const review = record.reviewRounds[0];
-    const draft = buildRejectionLetterDraft({
+    return {
       applicationNumber: record.nomor,
       applicationTitle: record.judul,
       applicationType: `${record.jenis} / ${record.jenisPermohonan}`,
@@ -843,15 +904,52 @@ export class RekomtekWorkflowService {
           : 'Berkas Persyaratan',
         note: finding.note,
       })),
-    });
+    };
+  }
 
-    const buffer = await renderRejectionLetterPdf(draft);
-    if (buffer.length === 0) {
-      throw new InternalServerErrorException(
-        'Draft Surat Penolakan gagal dibuat karena tidak memiliki isi',
-      );
-    }
-    return { buffer, fileName: rejectionLetterFileName(record.nomor) };
+  private async assertRejectionLetterAccess(
+    id: string,
+    user: AuthenticatedUser,
+  ) {
+    this.assertPermission(user, 'rekomtek.reject');
+    this.assertPermission(user, 'rekomtek.artifact');
+    this.assertRole(user, 'PETUGAS', 'PIMPINAN', 'SUPER_ADMIN', 'ADMIN');
+    const current = await this.loadRecord(id);
+    this.assertStage(current, RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN);
+    await this.assertPokjaOrOfficialAccess(id, user);
+    return current;
+  }
+
+  async getRejectionLetterContext(id: string, user: AuthenticatedUser) {
+    const current = await this.assertRejectionLetterAccess(id, user);
+    return {
+      ...(await this.loadRejectionLetterInput(id)),
+      expectedWorkflowVersion: current.workflowVersion,
+    };
+  }
+
+  async previewRejectionLetter(
+    id: string,
+    dto: IssueRejectionLetterDto,
+    user: AuthenticatedUser,
+  ) {
+    await this.assertRejectionLetterAccess(id, user);
+    void dto;
+    throw new ConflictException(
+      'Gunakan antrean persetujuan surat penolakan untuk meninjau snapshot yang tercatat',
+    );
+  }
+
+  async generateAndIssueRejection(
+    id: string,
+    dto: IssueRejectionLetterDto,
+    user: AuthenticatedUser,
+  ) {
+    await this.assertRejectionLetterAccess(id, user);
+    void dto;
+    throw new ConflictException(
+      'Penandatanganan dan penerbitan surat dinonaktifkan sampai kelas TTE dan penguasaan kunci ditetapkan',
+    );
   }
 
   async uploadArtifact(
@@ -861,6 +959,11 @@ export class RekomtekWorkflowService {
     user: AuthenticatedUser,
   ) {
     this.assertPermission(user, 'rekomtek.artifact');
+    if (dto.type === RekomtekArtifactType.SURAT_PENOLAKAN) {
+      throw new BadRequestException(
+        'Surat Penolakan tidak dapat diunggah atau difinalisasi; penerbitan menunggu aktivasi TTE',
+      );
+    }
     const current = await this.loadRecord(id);
     const currentStage = current.workflowStage;
     if (!currentStage)
@@ -946,6 +1049,11 @@ export class RekomtekWorkflowService {
     });
     if (!artifact)
       throw new NotFoundException('Artefak proses tidak ditemukan');
+    if (artifact.type === RekomtekArtifactType.SURAT_PENOLAKAN) {
+      throw new BadRequestException(
+        'Surat Penolakan tidak dapat diunggah atau difinalisasi; penerbitan menunggu aktivasi TTE',
+      );
+    }
     if (artifact.status === RekomtekArtifactStatus.FINAL) return artifact;
     if (artifact.stage !== current.workflowStage) {
       throw new ConflictException(
@@ -1042,7 +1150,23 @@ export class RekomtekWorkflowService {
         );
       }
     }
-    if (!artifact.storageKey.startsWith('active/')) {
+    const artifactMetadata =
+      artifact.metadata !== null &&
+      typeof artifact.metadata === 'object' &&
+      !Array.isArray(artifact.metadata)
+        ? artifact.metadata
+        : null;
+    const isGeneratedQrRejection =
+      artifact.type === RekomtekArtifactType.SURAT_PENOLAKAN &&
+      artifactMetadata?.issuanceMethod === 'HEAD_APPROVAL_QR' &&
+      typeof artifactMetadata.sourceJobId === 'string' &&
+      artifactMetadata.sourceJobId.length > 0 &&
+      (artifactMetadata.isTestOnly === true ||
+        artifactMetadata.isTestOnly === false) &&
+      artifact.storageKey.startsWith('generated/') &&
+      artifact.stage === RekomtekWorkflowStage.DITOLAK &&
+      current.workflowStage === RekomtekWorkflowStage.DITOLAK;
+    if (!artifact.storageKey.startsWith('active/') && !isGeneratedQrRejection) {
       throw new ForbiddenException('Artefak belum berada pada storage aktif');
     }
     const file = await this.fileStorage.getFile(artifact.storageKey);
@@ -2000,10 +2124,12 @@ export class RekomtekWorkflowService {
     if (
       current.workflowStage === RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN
     ) {
-      return this.issueRejection(id, user);
+      throw new BadRequestException(
+        'Gunakan antrean persetujuan surat penolakan; penerbitan langsung dinonaktifkan',
+      );
     }
     throw new BadRequestException(
-      'Penolakan hanya dapat dilakukan setelah Evaluasi Dokumen Ulang tidak memenuhi dan Surat Penolakan final tersedia',
+      'Penolakan hanya dapat dilakukan melalui formulir penerbitan langsung setelah Evaluasi Dokumen Ulang tidak memenuhi',
     );
   }
 
@@ -2101,6 +2227,38 @@ export class RekomtekWorkflowService {
     );
   }
 
+  async transitionRejectionToIssuedInTransaction(
+    tx: Prisma.TransactionClient,
+    rekomtekId: string,
+    user: AuthenticatedUser,
+    metadata: Prisma.InputJsonValue,
+    options: { suppressNotifications?: boolean } = {},
+  ) {
+    this.assertPermission(user, 'rekomtek.approve.final');
+    this.assertRole(user, 'PIMPINAN');
+    const current = await tx.rekomtek.findUnique({
+      where: { id: rekomtekId },
+      include: detailInclude,
+    });
+    if (!current) {
+      throw new NotFoundException('Permohonan Rekomtek tidak ditemukan');
+    }
+    this.assertStage(current, RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN);
+    return this.transitionInTransaction(
+      tx,
+      current,
+      RekomtekWorkflowStage.DITOLAK,
+      options.suppressNotifications
+        ? 'TERBITKAN_SURAT_PENOLAKAN_QR_UJI_LOKAL'
+        : 'TERBITKAN_SURAT_PENOLAKAN_QR',
+      user,
+      { reviewedBy: user.userId, reviewedAt: new Date() },
+      metadata,
+      undefined,
+      options,
+    );
+  }
+
   private async transitionInTransaction(
     tx: Prisma.TransactionClient,
     current: WorkflowRecord,
@@ -2110,6 +2268,7 @@ export class RekomtekWorkflowService {
     data?: Prisma.RekomtekUpdateInput,
     metadata?: Prisma.InputJsonValue,
     reason?: string,
+    options: { suppressNotifications?: boolean } = {},
   ) {
     assertWorkflowTransition(current.workflowStage!, target);
     const claimed = await tx.rekomtek.updateMany({
@@ -2142,14 +2301,16 @@ export class RekomtekWorkflowService {
         metadata,
       },
     });
-    await this.createTransitionNotifications(
-      tx,
-      current.id,
-      target,
-      event.id,
-      user.userId,
-    );
-    if (this.whatsappOutbox) {
+    if (!options.suppressNotifications) {
+      await this.createTransitionNotifications(
+        tx,
+        current.id,
+        target,
+        event.id,
+        user.userId,
+      );
+    }
+    if (!options.suppressNotifications && this.whatsappOutbox) {
       await this.whatsappOutbox.enqueueWorkflowTransition(tx, {
         rekomtekId: current.id,
         eventId: event.id,
@@ -2498,9 +2659,6 @@ export class RekomtekWorkflowService {
       ],
       [RekomtekWorkflowStage.MENUNGGU_BA_EKSPOSE]: [
         RekomtekArtifactType.BERITA_ACARA_EKSPOSE,
-      ],
-      [RekomtekWorkflowStage.PENYUSUNAN_SURAT_PENOLAKAN]: [
-        RekomtekArtifactType.SURAT_PENOLAKAN,
       ],
       [RekomtekWorkflowStage.MENUNGGU_SPT_LAPANGAN]: [
         RekomtekArtifactType.SPT_LAPANGAN,

@@ -113,7 +113,7 @@ All DTOs use `class-validator` + `class-transformer`. Global `ValidationPipe` wi
 - **`ObservationDetail`** — sub-hourly readings (water level + discharge per time)
 - **`ImportDraft`** — ephemeral (1-hour expiry), stores parsed JSON rows + metadata
 - **Enums**: `RoleType`, `StationType`, `ObservationSource`, `ImportType`
-- **Roles**: `SUPER_ADMIN` | `ADMIN` | `PETUGAS` | `PIMPINAN` | `USER`
+- **Roles**: `SUPER_ADMIN` | `ADMIN` | `PETUGAS` | `PETUGAS_PETA` | `PIMPINAN` | `KEPALA_BIDANG` | `USER`
 
 ### Key Environment Variables (.env)
 

@@ -119,7 +119,11 @@ function createFixture() {
     },
   };
   const prisma = {
-    rekomtek: { findUnique: jest.fn() },
+    rekomtek: {
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+    },
     rekomtekBerkas: { count: jest.fn().mockResolvedValue(1) },
     user: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -152,8 +156,11 @@ function createFixture() {
       findFirst: jest.fn(),
     },
     rekomtekWorkflowEvent: tx.rekomtekWorkflowEvent,
-    $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) =>
-      callback(tx),
+    $transaction: jest.fn(
+      (
+        operation: ((transaction: typeof tx) => unknown) | unknown[],
+      ) =>
+        Array.isArray(operation) ? Promise.all(operation) : operation(tx),
     ),
   };
   const berkasService = {
@@ -1376,6 +1383,24 @@ describe('RekomtekWorkflowService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('does not let PIMPINAN use final approval without the KEPALA_BIDANG role', async () => {
+    const { service, prisma } = createFixture();
+
+    await expect(
+      service.superiorApproval(
+        'rekomtek-1',
+        { decision: 'KEMBALIKAN', note: 'Perlu diperbaiki' },
+        actor({
+          userId: 'pejabat-1',
+          role: 'PIMPINAN',
+          roles: ['PIMPINAN'],
+          permissions: ['rekomtek.approve.final'],
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.rekomtek.findUnique).not.toHaveBeenCalled();
+  });
+
   it('does not allow a missing workflow migration to be treated as a normal stage', async () => {
     const { service, prisma } = createFixture();
     prisma.rekomtek.findUnique.mockResolvedValue(
@@ -1662,8 +1687,8 @@ describe('RekomtekWorkflowService', () => {
       tx,
       'rekomtek-1',
       actor({
-        role: 'PIMPINAN',
-        roles: ['PIMPINAN'],
+        role: 'KEPALA_BIDANG',
+        roles: ['KEPALA_BIDANG'],
         permissions: ['rekomtek.approve.final'],
       }),
       { issuanceMethod: 'HEAD_APPROVAL_QR', isTestOnly: true },
@@ -1693,5 +1718,30 @@ describe('RekomtekWorkflowService', () => {
     );
     expect(tx.rekomtekNotification.createMany).not.toHaveBeenCalled();
     expect(whatsappOutbox.enqueueWorkflowTransition).not.toHaveBeenCalled();
+  });
+
+  it('limits a KEPALA_BIDANG queue to pending superior approval only', async () => {
+    const { service, prisma } = createFixture();
+
+    await service.findQueue(
+      { page: 1, limit: 20 },
+      actor({
+        userId: 'head-1',
+        role: 'KEPALA_BIDANG',
+        roles: ['KEPALA_BIDANG'],
+        permissions: ['rekomtek.workflow.read'],
+      }),
+    );
+
+    expect(prisma.rekomtek.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          workflowStage: RekomtekWorkflowStage.MENUNGGU_PERSETUJUAN_ATASAN,
+        }),
+      }),
+    );
+    expect(prisma.rekomtek.findMany.mock.calls[0][0].where).not.toHaveProperty(
+      'createdById',
+    );
   });
 });

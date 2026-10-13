@@ -298,7 +298,7 @@ export class DashboardNotificationsService {
   private assertCanManage(user: AuthenticatedUser): void {
     if (!canManageDashboardNotifications(user))
       throw new ForbiddenException(
-        'Kelola pemberitahuan hanya untuk Kepala Seksi, Kepala Bidang, dan Super Admin',
+        'Kelola pemberitahuan hanya untuk Kepala Seksi dan Super Admin',
       );
   }
 

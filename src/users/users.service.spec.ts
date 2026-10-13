@@ -82,6 +82,63 @@ describe('UsersService role synchronization', () => {
     });
   });
 
+  it('grants only read and final-approval permissions to KEPALA_BIDANG', async () => {
+    const { service, prisma } = createService();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      roleId: null,
+      role: null,
+      userRoles: [],
+      userPermissions: [],
+    });
+    prisma.role.findUnique.mockResolvedValue({
+      id: 'kepala-bidang-role-id',
+      name: 'KEPALA_BIDANG',
+    });
+    prisma.userRole.findUnique.mockResolvedValue(null);
+    const availablePermissions = [
+      { id: 'read-id', slug: 'rekomtek.read' },
+      { id: 'workflow-read-id', slug: 'rekomtek.workflow.read' },
+      { id: 'approve-id', slug: 'rekomtek.approve.final' },
+      { id: 'inspect-id', slug: 'rekomtek.inspect' },
+      { id: 'publish-id', slug: 'rekomtek.publish.final' },
+    ];
+    prisma.permission.findMany.mockImplementation(
+      (args: { where?: { slug?: { in?: string[] } } }) => {
+        const requested = args.where?.slug?.in ?? [];
+        return Promise.resolve(
+          availablePermissions.filter(({ slug }) => requested.includes(slug)),
+        );
+      },
+    );
+
+    await service.assignRole('user-1', 'kepala-bidang-role-id');
+
+    expect(prisma.userPermission.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: 'user-1',
+          permissionId: 'read-id',
+          manualGrant: false,
+          sourceRoleIds: ['kepala-bidang-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'workflow-read-id',
+          manualGrant: false,
+          sourceRoleIds: ['kepala-bidang-role-id'],
+        },
+        {
+          userId: 'user-1',
+          permissionId: 'approve-id',
+          manualGrant: false,
+          sourceRoleIds: ['kepala-bidang-role-id'],
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
   it('grants checklist review permissions when PETUGAS is assigned', async () => {
     const { service, prisma } = createService();
     prisma.user.findUnique.mockResolvedValue({

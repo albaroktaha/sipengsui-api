@@ -18,8 +18,8 @@ const activeSettings = {
 const user = (overrides: Record<string, unknown> = {}) => ({
   userId: 'head-1',
   email: 'head@example.test',
-  role: 'PIMPINAN',
-  roles: ['PIMPINAN'],
+  role: 'KEPALA_BIDANG',
+  roles: ['KEPALA_BIDANG'],
   permissions: ['rekomtek.approve.final'],
   ...overrides,
 });

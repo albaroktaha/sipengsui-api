@@ -376,7 +376,19 @@ export class RekomtekWorkflowService {
       'SUPER_ADMIN',
       'ADMIN',
       'PIMPINAN',
+      'KEPALA_BIDANG',
     );
+    const isKepalaBidangOnly =
+      this.hasRole(user, 'KEPALA_BIDANG') &&
+      !this.hasRole(user, 'PETUGAS', 'PIMPINAN', 'ADMIN', 'SUPER_ADMIN');
+    if (isKepalaBidangOnly) {
+      const approvalStage =
+        RekomtekWorkflowStage.MENUNGGU_PERSETUJUAN_ATASAN;
+      where.workflowStage =
+        query.stage && query.stage !== approvalStage
+          ? { in: [] }
+          : approvalStage;
+    }
     if (!userIsPetugas && !userCanSeeAll) {
       where.createdById = user.userId;
     }
@@ -2020,7 +2032,7 @@ export class RekomtekWorkflowService {
     user: AuthenticatedUser,
   ) {
     this.assertPermission(user, 'rekomtek.approve.final');
-    this.assertRole(user, 'PIMPINAN', 'SUPER_ADMIN', 'ADMIN');
+    this.assertRole(user, 'KEPALA_BIDANG', 'SUPER_ADMIN', 'ADMIN');
     const current = await this.loadRecord(id);
     this.assertStage(
       current,
@@ -2191,7 +2203,10 @@ export class RekomtekWorkflowService {
   ): Promise<void> {
     if (
       record.createdById === user.userId ||
-      this.hasRole(user, 'SUPER_ADMIN', 'ADMIN', 'PIMPINAN')
+      this.hasRole(user, 'SUPER_ADMIN', 'ADMIN', 'PIMPINAN') ||
+      (this.hasRole(user, 'KEPALA_BIDANG') &&
+        record.workflowStage ===
+          RekomtekWorkflowStage.MENUNGGU_PERSETUJUAN_ATASAN)
     )
       return;
     if (this.hasRole(user, 'PETUGAS')) {
@@ -2235,7 +2250,7 @@ export class RekomtekWorkflowService {
     options: { suppressNotifications?: boolean } = {},
   ) {
     this.assertPermission(user, 'rekomtek.approve.final');
-    this.assertRole(user, 'PIMPINAN');
+    this.assertRole(user, 'KEPALA_BIDANG');
     const current = await tx.rekomtek.findUnique({
       where: { id: rekomtekId },
       include: detailInclude,

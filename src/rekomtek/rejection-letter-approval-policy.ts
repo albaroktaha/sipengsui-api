@@ -5,7 +5,8 @@ export function assertRejectionLetterApprover(
   user: AuthenticatedUser,
   activeHeadUserId: string | null | undefined,
 ): void {
-  const isHead = user.roles?.includes('PIMPINAN') || user.role === 'PIMPINAN';
+  const isHead =
+    user.roles?.includes('KEPALA_BIDANG') || user.role === 'KEPALA_BIDANG';
   const hasApprovalPermission =
     user.permissions.includes('rekomtek.approve.final') ||
     user.permissions.includes('*');

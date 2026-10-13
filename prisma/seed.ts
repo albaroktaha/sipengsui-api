@@ -396,14 +396,30 @@ async function main() {
       OR: [
         {
           role: {
-            name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+            name: {
+              in: [
+                'SUPER_ADMIN',
+                'ADMIN',
+                'PETUGAS',
+                'PIMPINAN',
+                'KEPALA_BIDANG',
+              ],
+            },
           },
         },
         {
           userRoles: {
             some: {
               role: {
-                name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+                name: {
+                  in: [
+                    'SUPER_ADMIN',
+                    'ADMIN',
+                    'PETUGAS',
+                    'PIMPINAN',
+                    'KEPALA_BIDANG',
+                  ],
+                },
               },
             },
           },
@@ -490,7 +506,9 @@ async function main() {
     ]);
     return (
       roles.has('PETUGAS') &&
-      !['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'].some((role) => roles.has(role))
+      !['SUPER_ADMIN', 'ADMIN', 'PIMPINAN', 'KEPALA_BIDANG'].some((role) =>
+        roles.has(role),
+      )
     );
   });
   const petugasReviewPermissionSlugs = [...PETUGAS_WORKFLOW_PERMISSION_SLUGS];
@@ -541,14 +559,30 @@ async function main() {
       NOT: [
         {
           role: {
-            name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+            name: {
+              in: [
+                'SUPER_ADMIN',
+                'ADMIN',
+                'PETUGAS',
+                'PIMPINAN',
+                'KEPALA_BIDANG',
+              ],
+            },
           },
         },
         {
           userRoles: {
             some: {
               role: {
-                name: { in: ['SUPER_ADMIN', 'ADMIN', 'PETUGAS', 'PIMPINAN'] },
+                name: {
+                  in: [
+                    'SUPER_ADMIN',
+                    'ADMIN',
+                    'PETUGAS',
+                    'PIMPINAN',
+                    'KEPALA_BIDANG',
+                  ],
+                },
               },
             },
           },

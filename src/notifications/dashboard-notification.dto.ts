@@ -24,6 +24,7 @@ export const DASHBOARD_NOTIFICATION_TARGET_ROLES = [
   'PETUGAS',
   'PETUGAS_PETA',
   'PIMPINAN',
+  'KEPALA_BIDANG',
   'USER',
 ] as const;
 export type DashboardNotificationTargetRole =

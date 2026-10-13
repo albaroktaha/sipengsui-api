@@ -21,14 +21,24 @@ describe('canManageDashboardNotifications', () => {
     ).toBe(true);
   });
 
-  it('allows Kepala Bidang through the final-approval permission', () => {
+  it('does not give Kepala Bidang notification management through approval permission', () => {
+    expect(
+      canManageDashboardNotifications({
+        role: 'KEPALA_BIDANG',
+        roles: ['KEPALA_BIDANG'],
+        permissions: ['rekomtek.approve.final'],
+      }),
+    ).toBe(false);
+  });
+
+  it('does not treat PIMPINAN as Kepala Bidang based on a stray approval permission', () => {
     expect(
       canManageDashboardNotifications({
         role: 'PIMPINAN',
         roles: ['PIMPINAN'],
         permissions: ['rekomtek.approve.final'],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('denies PIMPINAN without either business permission', () => {

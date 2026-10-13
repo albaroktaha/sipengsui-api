@@ -42,6 +42,11 @@ const ROLE_PERMISSION_GRANTS: Partial<Record<RoleType, readonly string[]>> = {
     'rekomtek.inspect',
     'rekomtek.publish.final',
   ],
+  [RoleType.KEPALA_BIDANG]: [
+    'rekomtek.read',
+    'rekomtek.workflow.read',
+    'rekomtek.approve.final',
+  ],
   [RoleType.PETUGAS]: [
     ...PETUGAS_WORKFLOW_PERMISSION_SLUGS,
     'rekomtek.update',
@@ -57,7 +62,12 @@ const PETUGAS_RESTRICTED_PERMISSION_SLUGS = [
   'disaster-reports.create',
 ] as const;
 
-const PRIVILEGED_ROLE_NAMES = ['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'] as const;
+const PRIVILEGED_ROLE_NAMES = [
+  'SUPER_ADMIN',
+  'ADMIN',
+  'PIMPINAN',
+  'KEPALA_BIDANG',
+] as const;
 
 @Injectable()
 export class UsersService {

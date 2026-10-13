@@ -203,8 +203,8 @@ export class RejectionLetterApprovalService {
         id: user.userId,
         isActive: true,
         OR: [
-          { role: { name: 'PIMPINAN' } },
-          { userRoles: { some: { role: { name: 'PIMPINAN' } } } },
+          { role: { name: 'KEPALA_BIDANG' } },
+          { userRoles: { some: { role: { name: 'KEPALA_BIDANG' } } } },
         ],
         userPermissions: {
           some: { permission: { slug: 'rekomtek.approve.final' } },
@@ -225,8 +225,8 @@ export class RejectionLetterApprovalService {
       where: {
         isActive: true,
         OR: [
-          { role: { name: 'PIMPINAN' } },
-          { userRoles: { some: { role: { name: 'PIMPINAN' } } } },
+          { role: { name: 'KEPALA_BIDANG' } },
+          { userRoles: { some: { role: { name: 'KEPALA_BIDANG' } } } },
         ],
         userPermissions: {
           some: { permission: { slug: 'rekomtek.approve.final' } },
@@ -255,8 +255,10 @@ export class RejectionLetterApprovalService {
             id: settings.activeHeadUserId,
             isActive: true,
             OR: [
-              { role: { name: 'PIMPINAN' } },
-              { userRoles: { some: { role: { name: 'PIMPINAN' } } } },
+              { role: { name: 'KEPALA_BIDANG' } },
+              {
+                userRoles: { some: { role: { name: 'KEPALA_BIDANG' } } },
+              },
             ],
             userPermissions: {
               some: { permission: { slug: 'rekomtek.approve.final' } },
@@ -361,8 +363,8 @@ export class RejectionLetterApprovalService {
         id: dto.activeHeadUserId,
         isActive: true,
         OR: [
-          { role: { name: 'PIMPINAN' } },
-          { userRoles: { some: { role: { name: 'PIMPINAN' } } } },
+          { role: { name: 'KEPALA_BIDANG' } },
+          { userRoles: { some: { role: { name: 'KEPALA_BIDANG' } } } },
         ],
         userPermissions: {
           some: { permission: { slug: 'rekomtek.approve.final' } },
@@ -372,7 +374,7 @@ export class RejectionLetterApprovalService {
     });
     if (!activeHead) {
       throw new BadRequestException(
-        'Kepala Bidang harus aktif, ber-role PIMPINAN, dan memiliki permission rekomtek.approve.final',
+        'Kepala Bidang harus aktif, ber-role KEPALA_BIDANG, dan memiliki permission rekomtek.approve.final',
       );
     }
     return this.prisma.$transaction(async (tx) => {

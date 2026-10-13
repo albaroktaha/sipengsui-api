@@ -18,6 +18,7 @@ enum RoleType {
   PETUGAS
   PETUGAS_PETA
   PIMPINAN
+  KEPALA_BIDANG
   USER
 }
 

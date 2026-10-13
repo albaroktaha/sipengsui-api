@@ -1,4 +1,5 @@
 import {
+  assertRejectionLetterApprover,
   assertRejectionLetterSettingsManager,
   assertRejectionLetterAuthorityIsCurrent,
   assessRejectionLetterQrReadiness,
@@ -7,6 +8,34 @@ import {
 } from './rejection-letter-approval-policy';
 
 describe('rejection-letter approval settings policy', () => {
+  it('requires the dedicated KEPALA_BIDANG role and final-approval permission', () => {
+    expect(() =>
+      assertRejectionLetterApprover(
+        {
+          userId: 'head-1',
+          email: 'head@example.test',
+          role: 'KEPALA_BIDANG',
+          roles: ['KEPALA_BIDANG'],
+          permissions: ['rekomtek.approve.final'],
+        },
+        'head-1',
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      assertRejectionLetterApprover(
+        {
+          userId: 'pejabat-1',
+          email: 'pejabat@example.test',
+          role: 'PIMPINAN',
+          roles: ['PIMPINAN'],
+          permissions: ['rekomtek.approve.final'],
+        },
+        'pejabat-1',
+      ),
+    ).toThrow('Persetujuan hanya dapat dilakukan oleh Kepala Bidang aktif');
+  });
+
   it('reports QR issuance readiness and every blocking prerequisite', () => {
     const ready = assessRejectionLetterQrReadiness({
       settingsComplete: true,

@@ -15,7 +15,7 @@ export class DashboardNotificationManagementGuard implements CanActivate {
       .getRequest<{ user?: AuthenticatedUser }>().user;
     if (canManageDashboardNotifications(user)) return true;
     throw new ForbiddenException(
-      'Kelola pemberitahuan hanya untuk Kepala Seksi, Kepala Bidang, dan Super Admin',
+      'Kelola pemberitahuan hanya untuk Kepala Seksi dan Super Admin',
     );
   }
 }

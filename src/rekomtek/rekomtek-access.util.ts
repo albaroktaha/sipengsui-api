@@ -5,6 +5,7 @@ export const REKOMTEK_STAFF_ROLES = [
   'ADMIN',
   'PETUGAS',
   'PIMPINAN',
+  'KEPALA_BIDANG',
 ] as const;
 
 export function isRekomtekStaff(user: AuthenticatedUser): boolean {
@@ -20,7 +21,9 @@ export function isPetugasOnly(user: AuthenticatedUser): boolean {
   const roles = new Set([...(user.roles ?? []), user.role]);
   return (
     roles.has('PETUGAS') &&
-    !['SUPER_ADMIN', 'ADMIN', 'PIMPINAN'].some((role) => roles.has(role))
+    !['SUPER_ADMIN', 'ADMIN', 'PIMPINAN', 'KEPALA_BIDANG'].some((role) =>
+      roles.has(role),
+    )
   );
 }
 

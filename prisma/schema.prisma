@@ -1790,6 +1790,9 @@ model RejectionLetterSettings {
   id                       String                         @id @default("default")
   institutionName          String?
   institutionAddress       String?                        @db.Text
+  institutionPhoneFax      String?
+  institutionEmail         String?
+  institutionWebsite       String?
   issueCity                String?
   logoDataUrl              String?                        @db.Text
   verificationDomain       String?
@@ -1803,6 +1806,7 @@ model RejectionLetterSettings {
   activeHeadUser           User?                          @relation(fields: [activeHeadUserId], references: [id], onDelete: SetNull)
   activeHeadName           String?
   activeHeadPosition       String?
+  activeHeadRank           String?
   activeHeadNip            String?
   authorityStartsAt        DateTime?
   authorityEndsAt          DateTime?

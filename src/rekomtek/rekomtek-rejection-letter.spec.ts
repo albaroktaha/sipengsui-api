@@ -6,6 +6,7 @@ import {
   REJECTION_LETTER_LOGO_SIZE_PT,
   assertRejectionLetterFontsAvailable,
 } from './rekomtek-rejection-letter';
+import PDFDocument from 'pdfkit';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -142,6 +143,89 @@ describe('rekomtek rejection letter draft', () => {
     expect(withQr.length).toBeGreaterThan(withoutQr.length + 1000);
   }, 15_000);
 
+  it('omits the signature date and aligns the QR signatory block to the right margin', async () => {
+    const qr = await createRejectionLetterQrPng(
+      'https://example.go.id/verifikasi-surat?token=signature-layout',
+    );
+    const draft = {
+      ...buildRejectionLetterDraft(input),
+      letterDate: 'Medan, 13 Oktober 2026',
+      signatureLines: [
+        'Medan, 13 Oktober 2026',
+        'Kepala Bidang PJSA',
+        'Suyetno, S.T., M.M.',
+        'Pembina Tingkat I (IV/b)',
+        'NIP. 19750627 200701 1 004',
+      ],
+      verificationQrPng: qr,
+    } as unknown as Parameters<typeof renderRejectionLetterPdf>[0];
+    const textSpy = jest.spyOn(PDFDocument.prototype, 'text');
+    const imageSpy = jest.spyOn(PDFDocument.prototype, 'image');
+    try {
+      const pdf = await renderRejectionLetterPdf(draft);
+      const text = extractPdfText(pdf);
+      const roleCall = textSpy.mock.calls.find(
+        ([text]) => text === 'Kepala Bidang PJSA',
+      );
+      const qrCall = imageSpy.mock.calls.find(([image]) => image === qr);
+      expect(roleCall).toBeDefined();
+      expect(qrCall).toBeDefined();
+      const [, roleX, , roleOptions] = roleCall as unknown as [
+        string,
+        number,
+        number,
+        { width: number; align: string },
+      ];
+      const [, qrX] = qrCall as unknown as [Buffer, number, number, unknown];
+
+      expect(text).not.toContain('Medan, 13 Oktober 2026');
+      expect(text).toContain('Pembina Tingkat I (IV/b)');
+      expect(text).toContain('NIP. 19750627 200701 1 004');
+      expect(roleOptions.align).toBe('right');
+      expect(Math.abs(qrX + 90 - (roleX + roleOptions.width))).toBeLessThan(3);
+    } finally {
+      textSpy.mockRestore();
+      imageSpy.mockRestore();
+    }
+  }, 15_000);
+
+  it('renders the Sumatera Utara letterhead contact rows and official font sizes', async () => {
+    const address = 'Jalan Jenderal Besar A.H. Nasution No. 30';
+    const phoneFax = '(061) 123456 / (061) 654321';
+    const email = 'dinas@example.go.id';
+    const website = 'https://informasi.example.go.id';
+    const draft = {
+      ...buildRejectionLetterDraft(input),
+      institution: 'Dinas Sumber Daya Air',
+      institutionAddress: address,
+      institutionPhoneFax: phoneFax,
+      institutionEmail: email,
+      institutionWebsite: website,
+      issueCity: 'Medan',
+    } as unknown as Parameters<typeof renderRejectionLetterPdf>[0];
+    const fontSizeSpy = jest.spyOn(PDFDocument.prototype, 'fontSize');
+    try {
+      const pdf = await renderRejectionLetterPdf(draft);
+      const text = extractPdfText(pdf);
+      const addressIndex = text.indexOf(address);
+      const phoneIndex = text.indexOf(`Telp/Fax: ${phoneFax}`);
+      const emailIndex = text.indexOf(`Email: ${email}`);
+      const websiteIndex = text.indexOf(`Website: ${website}`);
+      const cityIndex = text.indexOf('MEDAN');
+
+      expect(text).toContain('PEMERINTAH PROVINSI SUMATERA UTARA');
+      expect(addressIndex).toBeGreaterThanOrEqual(0);
+      expect(phoneIndex).toBeGreaterThan(addressIndex);
+      expect(emailIndex).toBeGreaterThan(phoneIndex);
+      expect(websiteIndex).toBeGreaterThan(emailIndex);
+      expect(cityIndex).toBeGreaterThan(websiteIndex);
+      expect(fontSizeSpy).toHaveBeenCalledWith(14);
+      expect(fontSizeSpy).toHaveBeenCalledWith(18);
+    } finally {
+      fontSizeSpy.mockRestore();
+    }
+  }, 15_000);
+
   it('renders configured letterhead address and logo into the internal PDF', async () => {
     const logo = await createRejectionLetterQrPng(
       'https://example.go.id/logo-probe',
@@ -155,6 +239,67 @@ describe('rekomtek rejection letter draft', () => {
     });
 
     expect(branded.length).toBeGreaterThan(plain.length + 1000);
+  }, 15_000);
+
+  it('resets body text to the page margin after rendering a left-side logo', async () => {
+    const logo = await createRejectionLetterQrPng(
+      'https://example.go.id/logo-cursor-probe',
+    );
+    const draft = buildRejectionLetterDraft(input);
+    const titleCursorXs: number[] = [];
+    const pdfDocumentPrototype = (
+      PDFDocument as unknown as { prototype: PDFKit.PDFDocument }
+    ).prototype;
+    const textSpy = jest
+      .spyOn(pdfDocumentPrototype, 'text')
+      .mockImplementation(function (
+        this: PDFKit.PDFDocument,
+        ...args: unknown[]
+      ) {
+        if (args[0] === draft.title) titleCursorXs.push(this.x);
+        return this;
+      });
+    try {
+      await renderRejectionLetterPdf({ ...draft, logoBuffer: logo });
+      expect(titleCursorXs).toHaveLength(1);
+      expect(titleCursorXs[0]).toBeCloseTo((22.578 * 72) / 25.4, 2);
+    } finally {
+      textSpy.mockRestore();
+    }
+  }, 15_000);
+
+  it('preserves the source logo aspect ratio within the official header bounds', async () => {
+    const logo = await createRejectionLetterQrPng(
+      'https://example.go.id/logo-aspect-ratio',
+    );
+    const imageSpy = jest.spyOn(PDFDocument.prototype, 'image');
+    try {
+      await renderRejectionLetterPdf({
+        ...buildRejectionLetterDraft(input),
+        logoBuffer: logo,
+      });
+      const logoCall = imageSpy.mock.calls.find(([image]) => image === logo);
+      expect(logoCall).toBeDefined();
+      const logoOptions = (
+        logoCall as unknown as [
+          Buffer,
+          number,
+          number,
+          { fit?: number[]; align?: string; valign?: string },
+        ]
+      )[3];
+
+      expect(logoOptions).toMatchObject({
+        fit: [
+          REJECTION_LETTER_LOGO_SIZE_PT.width,
+          REJECTION_LETTER_LOGO_SIZE_PT.height,
+        ],
+        align: 'center',
+        valign: 'center',
+      });
+    } finally {
+      imageSpy.mockRestore();
+    }
   }, 15_000);
 
   it('uses Arial and the exact official logo dimensions', async () => {

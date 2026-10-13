@@ -5,6 +5,7 @@ import {
   ArrayUnique,
   IsArray,
   IsDateString,
+  IsEmail,
   IsIn,
   IsInt,
   IsNumber,
@@ -12,6 +13,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  IsUrl,
   Max,
   MaxLength,
   Min,
@@ -94,7 +96,7 @@ export class RejectionLetterLayoutConfigDto {
   @ApiPropertyOptional({ enum: REJECTION_LETTER_LAYOUT_BLOCKS, isArray: true })
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(REJECTION_LETTER_LAYOUT_BLOCKS.length)
+  @ArrayMinSize(REJECTION_LETTER_LAYOUT_BLOCKS.length - 1)
   @ArrayMaxSize(REJECTION_LETTER_LAYOUT_BLOCKS.length)
   @ArrayUnique()
   @IsIn([...REJECTION_LETTER_LAYOUT_BLOCKS], { each: true })
@@ -154,6 +156,27 @@ export class SaveRejectionLetterSettingsDto {
   @MinLength(1)
   @MaxLength(2000)
   institutionAddress!: string;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  institutionPhoneFax?: string | null;
+
+  @ApiPropertyOptional({ maxLength: 254 })
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(254)
+  institutionEmail?: string | null;
+
+  @ApiPropertyOptional({
+    maxLength: 500,
+    description: 'Website informasi publik, terpisah dari domain verifikasi',
+  })
+  @IsOptional()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
+  @MaxLength(500)
+  institutionWebsite?: string | null;
 
   @ApiProperty()
   @IsString()
@@ -227,6 +250,12 @@ export class SaveRejectionLetterSettingsDto {
   @MinLength(1)
   @MaxLength(300)
   activeHeadPosition!: string;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  activeHeadRank?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()

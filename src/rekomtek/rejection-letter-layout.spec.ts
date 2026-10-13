@@ -4,7 +4,7 @@ import {
 } from './rejection-letter-layout';
 
 describe('resolveRejectionLetterLayoutConfig', () => {
-  it('keeps the date immediately before the signer by default', () => {
+  it('omits the standalone city/date block from the default letter layout', () => {
     expect(DEFAULT_REJECTION_LETTER_LAYOUT_CONFIG.blockOrder).toEqual([
       'LETTERHEAD',
       'TITLE',
@@ -12,9 +12,28 @@ describe('resolveRejectionLetterLayoutConfig', () => {
       'RECIPIENT',
       'BODY',
       'CLOSING',
-      'DATE',
       'SIGNATURE',
     ]);
+  });
+
+  it('normalizes legacy template orders by removing the standalone city/date block', () => {
+    const legacy = {
+      ...DEFAULT_REJECTION_LETTER_LAYOUT_CONFIG,
+      blockOrder: [
+        'LETTERHEAD',
+        'TITLE',
+        'LETTER_META',
+        'RECIPIENT',
+        'BODY',
+        'CLOSING',
+        'DATE',
+        'SIGNATURE',
+      ],
+    };
+
+    expect(resolveRejectionLetterLayoutConfig(legacy).blockOrder).not.toContain(
+      'DATE',
+    );
   });
 
   it('rejects a malformed block order instead of silently using defaults', () => {

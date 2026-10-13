@@ -98,6 +98,11 @@ function officialApprovalFixture() {
     ...officialSettings,
     activeHeadUserId: 'head-1',
     activeHeadNip: '198001012000011001',
+    activeHeadRank: 'Pembina Tingkat I (IV/b)',
+    institutionPhoneFax: '(061) 123456 / (061) 654321',
+    institutionEmail: 'dinas@example.go.id',
+    institutionWebsite: 'https://informasi.example.go.id',
+    issueCity: 'Medan',
     logoDataUrl:
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lJkAAAAASUVORK5CYII=',
     authorityStartsAt: new Date('2000-01-01'),
@@ -436,7 +441,35 @@ describe('RejectionLetterApprovalService approval queue', () => {
     });
     const service = new RejectionLetterApprovalService(prisma as never);
 
-    await service.saveSettings(officialSettings as never, admin);
+    await service.saveSettings(
+      {
+        ...officialSettings,
+        institutionPhoneFax: '(061) 123456 / (061) 654321',
+        institutionEmail: 'dinas@example.go.id',
+        institutionWebsite: 'https://informasi.example.go.id',
+        activeHeadRank: 'Pembina Tingkat I (IV/b)',
+      } as never,
+      admin,
+    );
+
+    expect(tx.rejectionLetterSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        create: expect.objectContaining({
+          institutionPhoneFax: '(061) 123456 / (061) 654321',
+          institutionEmail: 'dinas@example.go.id',
+          institutionWebsite: 'https://informasi.example.go.id',
+          activeHeadRank: 'Pembina Tingkat I (IV/b)',
+        }),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        update: expect.objectContaining({
+          institutionPhoneFax: '(061) 123456 / (061) 654321',
+          institutionEmail: 'dinas@example.go.id',
+          institutionWebsite: 'https://informasi.example.go.id',
+          activeHeadRank: 'Pembina Tingkat I (IV/b)',
+        }),
+      }),
+    );
 
     expect(tx.rejectionLetterTemplate.updateMany).toHaveBeenCalledWith({
       where: {
@@ -592,7 +625,14 @@ describe('RejectionLetterApprovalService approval queue', () => {
       const pdfLines = pdfText.split(/\r?\n/).map((line) => line.trim());
       expect(pdfLines).toContain('Kepala Bidang');
       expect(pdfLines).toContain('Nama Kepala Bidang');
+      expect(pdfLines).toContain('Pembina Tingkat I (IV/b)');
       expect(pdfLines).toContain('NIP. 198001012000011001');
+      expect(pdfText).toContain('Telp/Fax: (061) 123456 / (061) 654321');
+      expect(pdfText).toContain('Email: dinas@example.go.id');
+      expect(pdfText).toContain('Website: https://informasi.example.go.id');
+      expect(pdfLines).toContain('MEDAN');
+      expect(pdfText).not.toContain('Medan, ');
+      expect(pdfText).not.toContain('Website: https://example.go.id');
       expect(pdfText).not.toContain(
         'Persetujuan Kepala Bidang tercatat melalui SIPENGSUI',
       );

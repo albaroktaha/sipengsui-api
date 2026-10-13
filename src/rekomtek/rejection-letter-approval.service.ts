@@ -384,6 +384,9 @@ export class RejectionLetterApprovalService {
           id: 'default',
           institutionName: dto.institutionName.trim(),
           institutionAddress: dto.institutionAddress.trim(),
+          institutionPhoneFax: dto.institutionPhoneFax?.trim() || null,
+          institutionEmail: dto.institutionEmail?.trim() || null,
+          institutionWebsite: dto.institutionWebsite?.trim() || null,
           issueCity: dto.issueCity.trim(),
           logoDataUrl: dto.logoDataUrl || null,
           verificationDomain,
@@ -396,6 +399,7 @@ export class RejectionLetterApprovalService {
           activeHeadUserId: dto.activeHeadUserId,
           activeHeadName: dto.activeHeadName.trim(),
           activeHeadPosition: dto.activeHeadPosition.trim(),
+          activeHeadRank: dto.activeHeadRank?.trim() || null,
           activeHeadNip: dto.activeHeadNip?.trim() || null,
           authorityStartsAt: new Date(dto.authorityStartsAt),
           authorityEndsAt: new Date(dto.authorityEndsAt),
@@ -406,6 +410,9 @@ export class RejectionLetterApprovalService {
         update: {
           institutionName: dto.institutionName.trim(),
           institutionAddress: dto.institutionAddress.trim(),
+          institutionPhoneFax: dto.institutionPhoneFax?.trim() || null,
+          institutionEmail: dto.institutionEmail?.trim() || null,
+          institutionWebsite: dto.institutionWebsite?.trim() || null,
           issueCity: dto.issueCity.trim(),
           logoDataUrl: dto.logoDataUrl || null,
           verificationDomain,
@@ -418,6 +425,7 @@ export class RejectionLetterApprovalService {
           activeHeadUserId: dto.activeHeadUserId,
           activeHeadName: dto.activeHeadName.trim(),
           activeHeadPosition: dto.activeHeadPosition.trim(),
+          activeHeadRank: dto.activeHeadRank?.trim() || null,
           activeHeadNip: dto.activeHeadNip?.trim() || null,
           authorityStartsAt: new Date(dto.authorityStartsAt),
           authorityEndsAt: new Date(dto.authorityEndsAt),
@@ -670,9 +678,13 @@ export class RejectionLetterApprovalService {
       settings: {
         institutionName: settings.institutionName,
         institutionAddress: settings.institutionAddress,
+        institutionPhoneFax: settings.institutionPhoneFax,
+        institutionEmail: settings.institutionEmail,
+        institutionWebsite: settings.institutionWebsite,
         issueCity: settings.issueCity,
         signatoryName: settings.activeHeadName,
         signatoryPosition: settings.activeHeadPosition,
+        activeHeadRank: settings.activeHeadRank,
         signatoryNip: settings.activeHeadNip ?? undefined,
       },
       template: template as unknown as RejectionLetterTemplateSnapshot,
@@ -1002,6 +1014,7 @@ export class RejectionLetterApprovalService {
               userId: user.userId,
               name: settings.activeHeadName,
               position: settings.activeHeadPosition,
+              rank: settings.activeHeadRank,
               nip: settings.activeHeadNip,
               authorityStartsAt: settings.authorityStartsAt.toISOString(),
               authorityEndsAt: settings.authorityEndsAt.toISOString(),
@@ -1054,6 +1067,7 @@ export class RejectionLetterApprovalService {
         ? {
             name: settings.activeHeadName,
             position: settings.activeHeadPosition,
+            rank: settings.activeHeadRank,
             nip: settings.activeHeadNip,
           }
         : jsonRecord(job.signerSnapshot);
@@ -1063,6 +1077,7 @@ export class RejectionLetterApprovalService {
       );
       const signerName = snapshotString(signer, 'name');
       const signerPosition = snapshotString(signer, 'position');
+      const signerRank = snapshotString(signer, 'rank');
       const nip = snapshotString(signer, 'nip');
       const snapDomain = normalizeOfficialVerificationDomain(
         snapshotString(
@@ -1107,9 +1122,22 @@ export class RejectionLetterApprovalService {
             snap as Record<string, Prisma.JsonValue>,
             'institutionAddress',
           ),
+          institutionPhoneFax: snapshotString(
+            snap as Record<string, Prisma.JsonValue>,
+            'institutionPhoneFax',
+          ),
+          institutionEmail: snapshotString(
+            snap as Record<string, Prisma.JsonValue>,
+            'institutionEmail',
+          ),
+          institutionWebsite: snapshotString(
+            snap as Record<string, Prisma.JsonValue>,
+            'institutionWebsite',
+          ),
           issueCity: city,
           signatoryName: signerName,
           signatoryPosition: signerPosition,
+          activeHeadRank: signerRank,
           signatoryNip: nip,
         },
         template: templateSnapshot,
@@ -1118,15 +1146,8 @@ export class RejectionLetterApprovalService {
         .replaceAll(signerName, '')
         .replace(/[\s,]+$/g, '')
         .trim();
-      // QR renderer currently reads [1]=position, [2]=name, [3]=NIP.
-      // Keep [0] as the unused date slot until that renderer contract changes.
       letter.disclaimer = '';
-      letter.signatureLines = [
-        `${city}, ${letter.letterDate ?? ''}`.trim(),
-        signerPosition,
-        signerName,
-        nip,
-      ];
+      letter.signatureLines = ['', signerPosition, signerName, signerRank, nip];
       letter.verificationQrPng = qr;
       letter.logoBuffer = snapLogo;
       const pdf = await renderRejectionLetterPdf(letter);
@@ -1389,6 +1410,8 @@ export class RejectionLetterApprovalService {
     });
     const signerName = snapshotString(approver, 'name');
     const signerPosition = snapshotString(approver, 'position');
+    const signatoryRank =
+      typeof approver.rank === 'string' ? approver.rank : undefined;
     const signatoryNip =
       typeof approver.nip === 'string' ? approver.nip : undefined;
     const template: RejectionLetterTemplateSnapshot = {
@@ -1462,9 +1485,22 @@ export class RejectionLetterApprovalService {
           typeof settingsSnapshot.institutionAddress === 'string'
             ? settingsSnapshot.institutionAddress
             : undefined,
+        institutionPhoneFax:
+          typeof settingsSnapshot.institutionPhoneFax === 'string'
+            ? settingsSnapshot.institutionPhoneFax
+            : undefined,
+        institutionEmail:
+          typeof settingsSnapshot.institutionEmail === 'string'
+            ? settingsSnapshot.institutionEmail
+            : undefined,
+        institutionWebsite:
+          typeof settingsSnapshot.institutionWebsite === 'string'
+            ? settingsSnapshot.institutionWebsite
+            : undefined,
         issueCity: city,
         signatoryName: signerName,
         signatoryPosition: signerPosition,
+        activeHeadRank: signatoryRank,
         signatoryNip,
       },
       template,
@@ -1475,10 +1511,11 @@ export class RejectionLetterApprovalService {
       .replace(/[\s,]+$/g, '')
       .trim();
     letter.signatureLines = [
-      `${city}, ${letter.letterDate ?? ''}`.trim(),
+      '',
       'Persetujuan Kepala Bidang tercatat melalui SIPENGSUI',
       signerName,
-      [signerPosition, signatoryNip].filter(Boolean).join(' · '),
+      signatoryRank ?? '',
+      signatoryNip ?? '',
     ];
     letter.verificationQrPng = verificationQrPng;
     letter.logoBuffer =

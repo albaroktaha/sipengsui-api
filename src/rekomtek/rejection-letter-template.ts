@@ -20,9 +20,13 @@ export interface RejectionLetterTemplateSnapshot {
 export interface RejectionLetterSettingsSnapshot {
   institutionName: string;
   institutionAddress?: string | null;
+  institutionPhoneFax?: string | null;
+  institutionEmail?: string | null;
+  institutionWebsite?: string | null;
   issueCity: string;
   signatoryName: string;
   signatoryPosition: string;
+  activeHeadRank?: string | null;
   signatoryNip?: string | null;
 }
 
@@ -186,6 +190,11 @@ export function buildConfiguredRejectionLetterDraft(
   return {
     institution: values.institutionName,
     institutionAddress: values.institutionAddress,
+    institutionPhoneFax:
+      input.settings.institutionPhoneFax?.trim() || undefined,
+    institutionEmail: input.settings.institutionEmail?.trim() || undefined,
+    institutionWebsite: input.settings.institutionWebsite?.trim() || undefined,
+    issueCity: values.city,
     title: 'SURAT PENOLAKAN PERMOHONAN REKOMENDASI TEKNIS',
     number: values.letterNumber,
     subject,
@@ -209,9 +218,10 @@ export function buildConfiguredRejectionLetterDraft(
       input.template.layoutConfig,
     ),
     signatureLines: [
-      `${values.city}, ${letterDate}`,
+      '',
       values.signatoryPosition,
       values.signatoryName,
+      input.settings.activeHeadRank?.trim() || '',
       values.signatoryNip,
     ],
     letterDate: `${values.city}, ${letterDate}`,

@@ -23,6 +23,10 @@ const baseInput = {
     signatoryName: 'Kepala Bidang Contoh',
     signatoryPosition: 'Kepala Bidang',
     signatoryNip: 'NIP-1',
+    activeHeadRank: 'Pembina Tingkat I (IV/b)',
+    institutionPhoneFax: '(061) 123456 / (061) 654321',
+    institutionEmail: 'dinas@example.go.id',
+    institutionWebsite: 'https://informasi.example.go.id',
   },
   outgoingNumber: 'AG/7/2026',
   outgoingDate: new Date('2026-06-01T00:00:00.000Z'),
@@ -45,6 +49,24 @@ describe('configured rejection-letter snapshot', () => {
     expect(letter.closing).toBe('Hormat kami, Kepala Bidang Contoh');
     expect(letter.number).toBe('AG/7/2026');
     expect(letter.institutionAddress).toBe('Jalan Contoh No. 1');
+  });
+
+  it('carries optional contacts and places the signatory rank between name and NIP', () => {
+    const letter = buildConfiguredRejectionLetterDraft(baseInput);
+
+    expect(letter).toMatchObject({
+      institutionPhoneFax: '(061) 123456 / (061) 654321',
+      institutionEmail: 'dinas@example.go.id',
+      institutionWebsite: 'https://informasi.example.go.id',
+      issueCity: 'Kota Contoh',
+    });
+    expect(letter.signatureLines).toEqual([
+      '',
+      'Kepala Bidang',
+      'Kepala Bidang Contoh',
+      'Pembina Tingkat I (IV/b)',
+      'NIP-1',
+    ]);
   });
 
   it('carries the selected template layout into the generated draft', () => {

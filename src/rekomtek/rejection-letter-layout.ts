@@ -55,7 +55,6 @@ export const DEFAULT_REJECTION_LETTER_LAYOUT_CONFIG: RejectionLetterLayoutConfig
       'RECIPIENT',
       'BODY',
       'CLOSING',
-      'DATE',
       'SIGNATURE',
     ],
     blockAlignments: {
@@ -144,16 +143,27 @@ export function resolveRejectionLetterLayoutConfig(
   const rawBlockOrder: unknown[] = Array.isArray(value.blockOrder)
     ? value.blockOrder
     : DEFAULT_REJECTION_LETTER_LAYOUT_CONFIG.blockOrder;
+  const includesLegacyDate = rawBlockOrder.includes('DATE');
+  const requiredBlocks = REJECTION_LETTER_LAYOUT_BLOCKS.filter(
+    (block) => block !== 'DATE',
+  );
   if (
-    rawBlockOrder.length !== REJECTION_LETTER_LAYOUT_BLOCKS.length ||
-    new Set(rawBlockOrder).size !== REJECTION_LETTER_LAYOUT_BLOCKS.length ||
-    REJECTION_LETTER_LAYOUT_BLOCKS.some(
-      (block) => !rawBlockOrder.includes(block),
+    rawBlockOrder.length !==
+      requiredBlocks.length + (includesLegacyDate ? 1 : 0) ||
+    new Set(rawBlockOrder).size !== rawBlockOrder.length ||
+    requiredBlocks.some((block) => !rawBlockOrder.includes(block)) ||
+    rawBlockOrder.some(
+      (block) =>
+        !REJECTION_LETTER_LAYOUT_BLOCKS.includes(
+          block as RejectionLetterLayoutBlockId,
+        ),
     )
   ) {
     throw new Error('Urutan blok tata letak surat tidak valid');
   }
-  const blockOrder = rawBlockOrder as RejectionLetterLayoutBlockId[];
+  const blockOrder = rawBlockOrder.filter(
+    (block) => block !== 'DATE',
+  ) as RejectionLetterLayoutBlockId[];
 
   if (
     value.blockAlignments !== undefined &&

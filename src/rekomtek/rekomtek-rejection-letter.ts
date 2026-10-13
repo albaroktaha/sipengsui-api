@@ -56,6 +56,10 @@ export interface RejectionLetterDraftInput {
 export interface RejectionLetterDraft {
   institution: string;
   institutionAddress?: string;
+  institutionPhoneFax?: string;
+  institutionEmail?: string;
+  institutionWebsite?: string;
+  issueCity?: string;
   title: string;
   number: string;
   subject: string;
@@ -82,8 +86,13 @@ export interface RejectionLetterDetails {
   letterDate: string;
   city: string;
   institution: string;
+  institutionAddress?: string;
+  institutionPhoneFax?: string;
+  institutionEmail?: string;
+  institutionWebsite?: string;
   signatoryName: string;
   signatoryPosition: string;
+  signatoryRank?: string;
   signatoryIdentity?: string;
 }
 
@@ -100,6 +109,11 @@ export function buildFinalRejectionLetter(
   return {
     ...letter,
     institution: details.institution.trim(),
+    institutionAddress: details.institutionAddress?.trim(),
+    institutionPhoneFax: details.institutionPhoneFax?.trim(),
+    institutionEmail: details.institutionEmail?.trim(),
+    institutionWebsite: details.institutionWebsite?.trim(),
+    issueCity: details.city.trim(),
     number: details.letterNumber.trim(),
     subject: details.subject.trim(),
     letterDate: `${details.city.trim()}, ${date}`,
@@ -119,9 +133,10 @@ export function buildFinalRejectionLetter(
     disclaimer: '',
     closing: 'Demikian kami sampaikan dan diucapkan terima kasih.',
     signatureLines: [
-      `${details.city.trim()}, ${date}`,
+      '',
       details.signatoryPosition.trim(),
       details.signatoryName.trim(),
+      details.signatoryRank?.trim() || '',
       details.signatoryIdentity?.trim() || '',
     ],
   };
@@ -154,7 +169,6 @@ export function buildLocalTestRejectionLetterPresentation(
 
 const DRAFT_INSTITUTION = '[NAMA INSTANSI / UNIT KERJA]';
 const DRAFT_NUMBER = '[NOMOR SURAT]';
-const DRAFT_DATE = '[TEMPAT], [TANGGAL SURAT]';
 const DRAFT_SIGNATORY = '[NAMA PEJABAT PENANDATANGAN]';
 const DRAFT_IDENTITY = '[NIP / IDENTITAS PEJABAT]';
 const DRAFT_DISCLAIMER =
@@ -234,9 +248,10 @@ export function buildRejectionLetterDraft(
     closing:
       'Demikian disampaikan untuk menjadi perhatian dan ditindaklanjuti sesuai ketentuan yang berlaku.',
     signatureLines: [
-      DRAFT_DATE,
+      '',
       'Pejabat Rekomtek',
       DRAFT_SIGNATORY,
+      '',
       DRAFT_IDENTITY,
     ],
     layoutConfig: resolveRejectionLetterLayoutConfig(undefined),
@@ -346,8 +361,6 @@ export function renderRejectionLetterPdf(
       const alignment = alignmentFor(block);
       if (block === 'LETTERHEAD') {
         const headerTop = document.y;
-        const headerBottom =
-          headerTop + REJECTION_LETTER_LOGO_SIZE_PT.height + 8;
         const logoOnLeft = layoutConfig.logoPosition === 'LEFT';
         document.fillColor('#111111');
         if (draft.logoBuffer) {
@@ -355,7 +368,14 @@ export function renderRejectionLetterPdf(
             draft.logoBuffer,
             logoOnLeft ? left : right - REJECTION_LETTER_LOGO_SIZE_PT.width,
             headerTop,
-            REJECTION_LETTER_LOGO_SIZE_PT,
+            {
+              fit: [
+                REJECTION_LETTER_LOGO_SIZE_PT.width,
+                REJECTION_LETTER_LOGO_SIZE_PT.height,
+              ],
+              align: 'center',
+              valign: 'center',
+            },
           );
         }
         const textX = draft.logoBuffer
@@ -368,46 +388,69 @@ export function renderRejectionLetterPdf(
           : right - left;
         const isNorthSumatraAgency =
           draft.institution.trim().toUpperCase() === 'DINAS SUMBER DAYA AIR';
+        let headerTextY = headerTop + 3;
         if (isNorthSumatraAgency) {
           document
             .font('Arial-Bold')
-            .fontSize(11)
-            .text('PEMERINTAH PROVINSI SUMATERA UTARA', textX, headerTop + 3, {
+            .fontSize(14)
+            .text('PEMERINTAH PROVINSI SUMATERA UTARA', textX, headerTextY, {
               width: textWidth,
               align: alignment,
               lineBreak: false,
             });
+          headerTextY += 18;
         }
         document
           .fillColor('#111111')
           .font('Arial-Bold')
-          .fontSize(isNorthSumatraAgency ? 12 : 11)
-          .text(
-            draft.institution,
-            textX,
-            headerTop + (isNorthSumatraAgency ? 20 : 12),
-            { width: textWidth, align: alignment },
-          );
-        if (draft.institutionAddress?.trim()) {
-          const addressY = headerTop + (isNorthSumatraAgency ? 38 : 33);
-          document.font('Arial').fontSize(8);
-          if (
-            addressY +
-              document.heightOfString(draft.institutionAddress.trim(), {
-                width: textWidth,
-                lineGap: 1,
-              }) >
-            headerBottom - 3
-          ) {
-            throw new Error(
-              'Alamat kop surat terlalu panjang untuk area logo dan kop',
-            );
-          }
-          document.text(draft.institutionAddress.trim(), textX, addressY, {
+          .fontSize(isNorthSumatraAgency ? 18 : 11)
+          .text(draft.institution, textX, headerTextY, {
+            width: textWidth,
+            align: alignment,
+            lineBreak: false,
+          });
+        headerTextY += isNorthSumatraAgency ? 23 : 15;
+
+        const city = draft.issueCity?.trim();
+        const contactRows = [
+          draft.institutionAddress?.trim(),
+          draft.institutionPhoneFax?.trim()
+            ? `Telp/Fax: ${draft.institutionPhoneFax.trim()}`
+            : undefined,
+          draft.institutionEmail?.trim()
+            ? `Email: ${draft.institutionEmail.trim()}`
+            : undefined,
+          draft.institutionWebsite?.trim()
+            ? `Website: ${draft.institutionWebsite.trim()}`
+            : undefined,
+          city ? city.toUpperCase() : undefined,
+        ].filter((row): row is string => Boolean(row));
+        const cityRowIndex = city ? contactRows.length - 1 : -1;
+        contactRows.forEach((row, index) => {
+          document
+            .font(index === cityRowIndex ? 'Arial-Bold' : 'Arial')
+            .fontSize(8);
+          const rowHeight = document.heightOfString(row, {
+            width: textWidth,
+            lineGap: 1,
+          });
+          document.text(row, textX, headerTextY, {
             width: textWidth,
             align: alignment,
             lineGap: 1,
           });
+          headerTextY += rowHeight + 1;
+        });
+
+        const headerBottom = Math.max(
+          headerTop + REJECTION_LETTER_LOGO_SIZE_PT.height + 8,
+          headerTextY + 3,
+        );
+        if (
+          headerBottom + 14 >
+          document.page.height - document.page.margins.bottom
+        ) {
+          throw new Error('Kop surat terlalu panjang untuk satu halaman');
         }
         document
           .strokeColor('#111111')
@@ -420,6 +463,7 @@ export function renderRejectionLetterPdf(
           .moveTo(left, headerBottom + 3)
           .lineTo(right, headerBottom + 3)
           .stroke();
+        document.x = left;
         document.y = headerBottom + 14;
         return;
       }
@@ -434,13 +478,7 @@ export function renderRejectionLetterPdf(
       }
 
       if (block === 'DATE') {
-        if (draft.letterDate) {
-          document
-            .font('Arial')
-            .fontSize(layoutConfig.bodyFontSizePt)
-            .text(draft.letterDate, { align: alignment });
-        }
-        document.moveDown(0.8);
+        // The city is shown in the letterhead; the signing block has no date line.
         return;
       }
 
@@ -512,7 +550,7 @@ export function renderRejectionLetterPdf(
         return;
       }
 
-      const signatureHeight = draft.verificationQrPng ? 160 : 105;
+      const signatureHeight = draft.verificationQrPng ? 180 : 115;
       if (
         document.y + signatureHeight >
         document.page.height - document.page.margins.bottom
@@ -528,35 +566,67 @@ export function renderRejectionLetterPdf(
             : right - signatureWidth;
       const signatureY = document.y;
       if (draft.verificationQrPng) {
-        document
-          .font('Arial-Bold')
-          .fontSize(9.5)
-          .text(draft.signatureLines[1], signatureX, signatureY, {
-            width: signatureWidth,
-            align: alignment,
-          });
+        document.font('Arial-Bold').fontSize(9.5);
+        const position = draft.signatureLines[1] ?? '';
+        const positionWidth = Math.min(
+          signatureWidth,
+          document.widthOfString(position),
+        );
+        const positionTextX =
+          alignment === 'right'
+            ? signatureX + signatureWidth - positionWidth
+            : alignment === 'center'
+              ? signatureX + (signatureWidth - positionWidth) / 2
+              : signatureX;
+        document.text(position, signatureX, signatureY, {
+          width: signatureWidth,
+          align: alignment,
+        });
         const qrY = Math.max(signatureY + 16, document.y + 4);
-        document.image(draft.verificationQrPng, signatureX + 5, qrY, {
-          width: 90,
-          height: 90,
+        const qrSize = 90;
+        const qrX = Math.max(
+          left,
+          Math.min(
+            right - qrSize,
+            positionTextX + (positionWidth - qrSize) / 2,
+          ),
+        );
+        document.image(draft.verificationQrPng, qrX, qrY, {
+          width: qrSize,
+          height: qrSize,
         });
         document
           .font('Arial-Bold')
           .fontSize(10)
-          .text(draft.signatureLines[2], signatureX + 40, qrY + 92, {
-            width: signatureWidth - 40,
+          .text(draft.signatureLines[2] ?? '', signatureX, qrY + 92, {
+            width: signatureWidth,
             align: alignment,
           });
-        const identity = draft.signatureLines[3].trim();
+        const hasRankLine = draft.signatureLines.length >= 5;
+        const rank = hasRankLine ? (draft.signatureLines[3] ?? '').trim() : '';
+        const identity =
+          (hasRankLine
+            ? draft.signatureLines[4]
+            : draft.signatureLines[3]
+          )?.trim() ?? '';
+        if (rank) {
+          document
+            .font('Arial')
+            .fontSize(9)
+            .text(rank, signatureX, document.y + 2, {
+              width: signatureWidth,
+              align: alignment,
+            });
+        }
         if (identity) {
           document
             .font('Arial')
             .fontSize(9)
             .text(
               /^\d[\d\s]*$/.test(identity) ? `NIP. ${identity}` : identity,
-              signatureX + 40,
+              signatureX,
               document.y + 3,
-              { width: signatureWidth - 40, align: alignment },
+              { width: signatureWidth, align: alignment },
             );
         }
         document
@@ -569,30 +639,38 @@ export function renderRejectionLetterPdf(
             { width: signatureWidth, align: alignment },
           );
       } else {
-        if (!draft.letterDate)
-          document.text(draft.signatureLines[0], signatureX, signatureY, {
-            width: signatureWidth,
-            align: alignment,
-          });
         document
           .font('Arial')
-          .text(draft.signatureLines[1], signatureX, document.y, {
+          .text(draft.signatureLines[1] ?? '', signatureX, signatureY, {
             width: signatureWidth,
             align: alignment,
           });
         document.moveDown(2.8);
         document
           .font('Arial-Bold')
-          .text(draft.signatureLines[2], signatureX, document.y, {
+          .text(draft.signatureLines[2] ?? '', signatureX, document.y, {
             width: signatureWidth,
             align: alignment,
           });
-        document
-          .font('Arial')
-          .text(draft.signatureLines[3], signatureX, document.y, {
+        const hasRankLine = draft.signatureLines.length >= 5;
+        const rank = hasRankLine ? (draft.signatureLines[3] ?? '').trim() : '';
+        const identity =
+          (hasRankLine
+            ? draft.signatureLines[4]
+            : draft.signatureLines[3]
+          )?.trim() ?? '';
+        if (rank) {
+          document.font('Arial').text(rank, signatureX, document.y, {
             width: signatureWidth,
             align: alignment,
           });
+        }
+        if (identity) {
+          document.font('Arial').text(identity, signatureX, document.y, {
+            width: signatureWidth,
+            align: alignment,
+          });
+        }
       }
     };
 
